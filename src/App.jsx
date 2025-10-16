@@ -121,23 +121,27 @@ const handleReturn = async () => {
     });
 
     // If returning all items, mark as fully returned
-    if (returnQuantity === returnReceipt.quantity) {
-      const saleRef = doc(db, 'sales', returnReceipt.id);
-      await updateDoc(saleRef, {
-        returned: true,
-        returnedAt: new Date().toISOString()
-      });
-    } else {
-      // Partial return - update the quantity
-      const saleRef = doc(db, 'sales', returnReceipt.id);
-      await updateDoc(saleRef, {
-        quantity: returnReceipt.quantity - returnQuantity,
-        total: (returnReceipt.quantity - returnQuantity) * returnReceipt.pricePerUnit,
-        partialReturn: true,
-        returnedQuantity: (returnReceipt.returnedQuantity || 0) + returnQuantity,
-        lastReturnAt: new Date().toISOString()
-      });
-    }
+   // Mark the sale record based on return type
+const saleRef = doc(db, 'sales', returnReceipt.id);
+if (returnQuantity === returnReceipt.quantity) {
+  // Full return - mark as returned
+  await updateDoc(saleRef, {
+    returned: true,
+    returnedAt: new Date().toISOString()
+  });
+} else {
+  // Partial return - update quantities and total
+  const newQuantity = returnReceipt.quantity - returnQuantity;
+  const newTotal = newQuantity * returnReceipt.pricePerUnit;
+  
+  await updateDoc(saleRef, {
+    quantity: newQuantity,
+    total: newTotal,
+    partialReturn: true,
+    returnedQuantity: (returnReceipt.returnedQuantity || 0) + returnQuantity,
+    lastReturnAt: new Date().toISOString()
+  });
+}
 
     setShowReturnModal(false);
     alert(`✅ Return processed successfully!\n${returnQuantity} unit(s) of size ${returnReceipt.size} have been returned to stock.`);
