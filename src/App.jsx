@@ -772,12 +772,26 @@ const emailReceipt = async (receipt) => {
                           </div>
                         </div>
                       </div>
-                      <div style={{ fontSize: '0.875rem', background: '#eff6ff', padding: '0.75rem', borderRadius: '0.5rem' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between' ,'color': '#1e3a8a'  }}>
-                          <span>{receipt.productName} ({receipt.sku}) - Size {receipt.size}</span>
-                          <span>{receipt.quantity}x R{receipt.pricePerUnit ? receipt.pricePerUnit.toFixed(2) : '0.00'}</span>
-                        </div>
-                      </div>
+                     <div style={{ fontSize: '0.875rem', background: '#eff6ff', padding: '0.75rem', borderRadius: '0.5rem' }}>
+  <div style={{ display: 'flex', justifyContent: 'space-between', color: '#1e3a8a' }}>
+    {receipt.type === 'exchange' ? (
+      <span>
+        {receipt.newProduct.name} ({receipt.newProduct.sku}) - Size {receipt.newProduct.size}
+        <br />
+        <span style={{ fontSize: '0.75rem', color: '#6b7280' }}>
+          (Exchanged from: {receipt.originalProduct.name} - Size {receipt.originalProduct.size})
+        </span>
+      </span>
+    ) : (
+      <span>{receipt.productName} ({receipt.sku}) - Size {receipt.size}</span>
+    )}
+    {receipt.type === 'exchange' ? (
+      <span>{receipt.newProduct.quantity}x R{receipt.newProduct.price.toFixed(2)}</span>
+    ) : (
+      <span>{receipt.quantity}x R{receipt.pricePerUnit ? receipt.pricePerUnit.toFixed(2) : '0.00'}</span>
+    )}
+  </div>
+</div>
                     </div>
                   ))}
                 </div>
