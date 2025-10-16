@@ -303,25 +303,52 @@ const handleExchange = async () => {
 
     // Return original product to stock
     // Return original product to stock
-const originalProductRef = doc(db, 'products', exchangeReceipt.productId);
-const originalUpdatedSizes = { ...originalProduct.sizes };
-const returnQuantity = exchangeReceipt.quantity; // The quantity being returned
-originalUpdatedSizes[exchangeReceipt.size] = (originalUpdatedSizes[exchangeReceipt.size] || 0) + returnQuantity;
-
-await updateDoc(originalProductRef, {
-  stock: originalProduct.stock + returnQuantity,
-  sizes: originalUpdatedSizes
-});
-
-    // Deduct new product from stock
-    const newProductRef = doc(db, 'products', exchangeProduct.id);
-    const newUpdatedSizes = { ...newProduct.sizes };
-    newUpdatedSizes[exchangeSize] = newUpdatedSizes[exchangeSize] - exchangeQuantity;
-
-    await updateDoc(newProductRef, {
-      stock: newProduct.stock - exchangeQuantity,
-      sizes: newUpdatedSizes
-    });
+// Check if exchanging within the same product or different products
+// Check if exchanging within the same product or different products
+if (exchangeReceipt.productId === exchangeProduct.id) {
+  // Same product - only update size distribution, total stock stays the same
+  const productRef = doc(db, 'products', exchangeReceipt.productId);
+  const updatedSizes = { ...originalProduct.sizes };
+  
+  // Check if exchanging the same size (shouldn't happen, but just in case)
+  if (exchangeReceipt.size === exchangeSize) {
+    alert('Cannot exchange for the same size. Please select a different size.');
+    return;
+  }
+  
+  // Add back the original size (what customer is returning)
+  updatedSizes[exchangeReceipt.size] = (updatedSizes[exchangeReceipt.size] || 0) + exchangeReceipt.quantity;
+  
+  // Deduct the new size (what customer is taking)
+  updatedSizes[exchangeSize] = (updatedSizes[exchangeSize] || 0) - exchangeQuantity;
+  
+  await updateDoc(productRef, {
+    sizes: updatedSizes
+    // Note: stock stays the same because we're returning items and taking items!
+  });
+} else {
+  // Different products - update both products
+  
+  // Return original product to stock
+  const originalProductRef = doc(db, 'products', exchangeReceipt.productId);
+  const originalUpdatedSizes = { ...originalProduct.sizes };
+  originalUpdatedSizes[exchangeReceipt.size] = (originalUpdatedSizes[exchangeReceipt.size] || 0) + exchangeReceipt.quantity;
+  
+  await updateDoc(originalProductRef, {
+    stock: originalProduct.stock + exchangeReceipt.quantity,
+    sizes: originalUpdatedSizes
+  });
+  
+  // Deduct new product from stock
+  const newProductRef = doc(db, 'products', exchangeProduct.id);
+  const newUpdatedSizes = { ...newProduct.sizes };
+  newUpdatedSizes[exchangeSize] = newUpdatedSizes[exchangeSize] - exchangeQuantity;
+  
+  await updateDoc(newProductRef, {
+    stock: newProduct.stock - exchangeQuantity,
+    sizes: newUpdatedSizes
+  });
+}
 
     // Calculate price difference
     const originalTotal = exchangeReceipt.total;
