@@ -38,7 +38,9 @@ const [showExchangeModal, setShowExchangeModal] = useState(false);
 const [exchangeReceipt, setExchangeReceipt] = useState(null);
 const [exchangeProduct, setExchangeProduct] = useState(null);
 const [exchangeSize, setExchangeSize] = useState('');
-const [exchangeQuantity, setExchangeQuantity] = useState(1);
+const [exchangeQuantity, setExchangeQuantity] = useState(1);const [returnQuantity, setReturnQuantity] = useState(1);
+const [showReturnModal, setShowReturnModal] = useState(false);
+const [returnReceipt, setReturnReceipt] = useState(null);
 
 
   useEffect(() => {
@@ -82,13 +84,26 @@ const [exchangeQuantity, setExchangeQuantity] = useState(1);
 
 
 
-const handleReturn = async (receipt) => {
-  if (!window.confirm(`Are you sure you want to process a return for ${receipt.productName}?\n\nThis will return ${receipt.quantity} unit(s) of size ${receipt.size} back to stock.`)) {
+const openReturnModal = (receipt) => {
+  setReturnReceipt(receipt);
+  setReturnQuantity(1);
+  setShowReturnModal(true);
+};
+
+const handleReturn = async () => {
+  if (!returnReceipt) return;
+
+  if (returnQuantity <= 0 || returnQuantity > returnReceipt.quantity) {
+    alert('Invalid return quantity');
+    return;
+  }
+
+  if (!window.confirm(`Are you sure you want to return ${returnQuantity} unit(s) of ${returnReceipt.productName} (Size ${returnReceipt.size})?`)) {
     return;
   }
 
   try {
-    const product = products.find(p => p.id === receipt.productId);
+    const product = products.find(p => p.id === returnReceipt.productId);
     
     if (!product) {
       alert('Product not found in inventory');
@@ -96,29 +111,41 @@ const handleReturn = async (receipt) => {
     }
 
     // Update the product stock
-    const productRef = doc(db, 'products', receipt.productId);
+    const productRef = doc(db, 'products', returnReceipt.productId);
     const updatedSizes = { ...product.sizes };
-    updatedSizes[receipt.size] = (updatedSizes[receipt.size] || 0) + receipt.quantity;
+    updatedSizes[returnReceipt.size] = (updatedSizes[returnReceipt.size] || 0) + returnQuantity;
 
     await updateDoc(productRef, {
-      stock: product.stock + receipt.quantity,
+      stock: product.stock + returnQuantity,
       sizes: updatedSizes
     });
 
-    // Mark the sale as returned
-    const saleRef = doc(db, 'sales', receipt.id);
-    await updateDoc(saleRef, {
-      returned: true,
-      returnedAt: new Date().toISOString()
-    });
+    // If returning all items, mark as fully returned
+    if (returnQuantity === returnReceipt.quantity) {
+      const saleRef = doc(db, 'sales', returnReceipt.id);
+      await updateDoc(saleRef, {
+        returned: true,
+        returnedAt: new Date().toISOString()
+      });
+    } else {
+      // Partial return - update the quantity
+      const saleRef = doc(db, 'sales', returnReceipt.id);
+      await updateDoc(saleRef, {
+        quantity: returnReceipt.quantity - returnQuantity,
+        total: (returnReceipt.quantity - returnQuantity) * returnReceipt.pricePerUnit,
+        partialReturn: true,
+        returnedQuantity: (returnReceipt.returnedQuantity || 0) + returnQuantity,
+        lastReturnAt: new Date().toISOString()
+      });
+    }
 
-    alert(`✅ Return processed successfully!\n${receipt.quantity} unit(s) of size ${receipt.size} have been returned to stock.`);
+    setShowReturnModal(false);
+    alert(`✅ Return processed successfully!\n${returnQuantity} unit(s) of size ${returnReceipt.size} have been returned to stock.`);
   } catch (error) {
     console.error('Error processing return:', error);
     alert('❌ Failed to process return. Please try again.');
   }
 };
-
 
 
 const completeSale = async () => {
@@ -271,14 +298,16 @@ const handleExchange = async () => {
     }
 
     // Return original product to stock
-    const originalProductRef = doc(db, 'products', exchangeReceipt.productId);
-    const originalUpdatedSizes = { ...originalProduct.sizes };
-    originalUpdatedSizes[exchangeReceipt.size] = (originalUpdatedSizes[exchangeReceipt.size] || 0) + exchangeReceipt.quantity;
+    // Return original product to stock
+const originalProductRef = doc(db, 'products', exchangeReceipt.productId);
+const originalUpdatedSizes = { ...originalProduct.sizes };
+const returnQuantity = exchangeReceipt.quantity; // The quantity being returned
+originalUpdatedSizes[exchangeReceipt.size] = (originalUpdatedSizes[exchangeReceipt.size] || 0) + returnQuantity;
 
-    await updateDoc(originalProductRef, {
-      stock: originalProduct.stock + exchangeReceipt.quantity,
-      sizes: originalUpdatedSizes
-    });
+await updateDoc(originalProductRef, {
+  stock: originalProduct.stock + returnQuantity,
+  sizes: originalUpdatedSizes
+});
 
     // Deduct new product from stock
     const newProductRef = doc(db, 'products', exchangeProduct.id);
@@ -705,7 +734,7 @@ const emailReceipt = async (receipt) => {
                           <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
                             <button onClick={() => downloadReceipt(receipt)} style={{ color: '#2563eb', fontSize: '0.875rem', background: 'none', border: 'none', cursor: 'pointer' }}>Download</button>
                             <button onClick={() => emailReceipt(receipt)} style={{ color: '#0ea5e9', fontSize: '0.875rem', background: 'none', border: 'none', cursor: 'pointer' }}>Email</button>
-                            <button onClick={() => handleReturn(receipt)} disabled={receipt.returned} style={{ color: receipt.returned ? '#9ca3af' : '#ef4444', fontSize: '0.875rem', background: 'none', border: 'none', cursor: receipt.returned ? 'not-allowed' : 'pointer' }}>{receipt.returned ? 'Returned' : 'Return'}</button>
+                          <button onClick={() => openReturnModal(receipt)} disabled={receipt.returned || receipt.exchanged} style={{ color: (receipt.returned || receipt.exchanged) ? '#9ca3af' : '#ef4444', fontSize: '0.875rem', background: 'none', border: 'none', cursor: (receipt.returned || receipt.exchanged) ? 'not-allowed' : 'pointer' }}>{receipt.returned ? 'Returned' : receipt.exchanged ? 'Exchanged' : 'Return'}</button>
                             {!receipt.returned && (
                               <button onClick={() => openExchangeModal(receipt)} style={{ color: '#8b5cf6', fontSize: '0.875rem', background: 'none', border: 'none', cursor: 'pointer' }}>Exchange</button>
                             )}
@@ -858,9 +887,9 @@ const emailReceipt = async (receipt) => {
             <div style={{ padding: '1.5rem' }}>
               <div style={{ background: '#faf5ff', padding: '1rem', borderRadius: '0.5rem', marginBottom: '1.5rem' }}>
                 <h4 style={{ fontWeight: '600', color: '#7c3aed', marginBottom: '0.5rem' }}>Original Purchase</h4>
-                <div style={{ fontSize: '0.875rem' }}>
-                  <div>{exchangeReceipt.productName} - Size {exchangeReceipt.size}</div>
-                  <div>{exchangeReceipt.quantity}x R{exchangeReceipt.pricePerUnit}</div>
+               <div style={{ fontSize: '0.875rem', color: '#1f2937' }}>
+                  <div style={{ color: '#1f2937' }}>{exchangeReceipt.productName} - Size {exchangeReceipt.size}</div>
+                 <div style={{ color: '#1f2937' }}>{exchangeReceipt.quantity}x R{exchangeReceipt.pricePerUnit}</div>
                 </div>
               </div>
 
@@ -910,6 +939,55 @@ const emailReceipt = async (receipt) => {
           </div>
         </div>
       )}
+      {showReturnModal && returnReceipt && (
+  <div style={{ position: 'fixed', inset: '0', background: 'rgba(239, 68, 68, 0.4)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem', zIndex: '50' }}>
+    <div style={{ background: 'white', borderRadius: '1rem', maxWidth: '28rem', width: '100%', padding: '1.5rem', boxShadow: '0 25px 50px -12px rgba(239, 68, 68, 0.25)', border: '2px solid #fecaca' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+        <h3 style={{ fontSize: '1.25rem', fontWeight: '600', color: '#dc2626' }}>Process Return</h3>
+        <button onClick={() => setShowReturnModal(false)} style={{ color: '#9ca3af', background: 'none', border: 'none', cursor: 'pointer' }}>
+          <X style={{ width: '24px', height: '24px' }} />
+        </button>
+      </div>
+
+      <div style={{ background: '#fef2f2', padding: '1rem', borderRadius: '0.5rem', marginBottom: '1.5rem' }}>
+        <h4 style={{ fontWeight: '600', color: '#dc2626', marginBottom: '0.5rem' }}>Original Purchase</h4>
+        <div style={{ fontSize: '0.875rem', color: '#1f2937' }}>
+          <div>{returnReceipt.productName} - Size {returnReceipt.size}</div>
+          <div>Quantity purchased: {returnReceipt.quantity}</div>
+          <div>Price per unit: R{returnReceipt.pricePerUnit.toFixed(2)}</div>
+        </div>
+      </div>
+
+      <div style={{ marginBottom: '1.5rem' }}>
+        <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '600', color: '#dc2626', marginBottom: '0.5rem' }}>
+          Quantity to Return
+        </label>
+        <input 
+          type="number" 
+          min="1" 
+          max={returnReceipt.quantity} 
+          value={returnQuantity} 
+          onChange={(e) => setReturnQuantity(Math.min(Math.max(1, parseInt(e.target.value) || 1), returnReceipt.quantity))} 
+          style={{ width: '100%', padding: '0.75rem', border: '2px solid #fecaca', borderRadius: '0.5rem', fontSize: '1rem', color: '#000', background: 'white' }} 
+        />
+      </div>
+
+      <div style={{ background: '#fef2f2', padding: '1rem', borderRadius: '0.5rem', marginBottom: '1.5rem', border: '2px solid #fecaca' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+          <span style={{ fontWeight: '600', color: '#dc2626' }}>Refund Amount:</span>
+          <span style={{ fontSize: '1.5rem', fontWeight: '700', color: '#dc2626' }}>R{(returnReceipt.pricePerUnit * returnQuantity).toFixed(2)}</span>
+        </div>
+      </div>
+
+      <button 
+        onClick={handleReturn} 
+        style={{ width: '100%', background: 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)', color: 'white', padding: '0.75rem', borderRadius: '0.5rem', fontWeight: '600', border: 'none', cursor: 'pointer' }}
+      >
+        Process Return
+      </button>
+    </div>
+  </div>
+)}
     </div>
   );
 }
