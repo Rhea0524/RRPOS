@@ -46,6 +46,7 @@ const [returnReceipt, setReturnReceipt] = useState(null);
 const [selectedReturnItem, setSelectedReturnItem] = useState(null);
 const [selectedExchangeItem, setSelectedExchangeItem] = useState(null);
 const [selectedReturnItems, setSelectedReturnItems] = useState([]);
+const [selectedExchangeItems, setSelectedExchangeItems] = useState([]);
 
 
   useEffect(() => {
@@ -375,11 +376,12 @@ const completeCheckout = async () => {
   }
 };
 
- const openExchangeModal = (receipt) => {
+const openExchangeModal = (receipt) => {
   setExchangeReceipt(receipt);
   setExchangeProduct(null);
   setExchangeSize('');
-  setExchangeQuantity(1); // Always start with 1
+  setExchangeQuantity(1);
+  setSelectedExchangeItems([]); // Add this line
   setShowExchangeModal(true);
 };
 
@@ -397,106 +399,128 @@ const handleExchange = async () => {
   try {
     const isMultiItem = exchangeReceipt.items && exchangeReceipt.items.length > 1;
     
-    // Get original product data
-    let originalProductId, originalSize, originalQuantity, originalPrice, originalName, originalSku;
+    // Determine items to exchange
+    let itemsToExchange = [];
     
     if (isMultiItem) {
-      if (selectedExchangeItem === null || selectedExchangeItem === '') {
-        alert('Please select a product to exchange');
+      if (selectedExchangeItems.length === 0) {
+        alert('Please select at least one product to exchange');
         return;
       }
-      const selectedItem = exchangeReceipt.items[selectedExchangeItem];
-      originalProductId = selectedItem.productId;
-      originalSize = selectedItem.size;
-      originalQuantity = selectedItem.quantity;
-      originalPrice = selectedItem.pricePerUnit;
-      originalName = selectedItem.productName;
-      originalSku = selectedItem.sku;
+      itemsToExchange = selectedExchangeItems.map(index => exchangeReceipt.items[index]);
     } else if (exchangeReceipt.items && exchangeReceipt.items.length === 1) {
-      originalProductId = exchangeReceipt.items[0].productId;
-      originalSize = exchangeReceipt.items[0].size;
-      originalQuantity = exchangeReceipt.items[0].quantity;
-      originalPrice = exchangeReceipt.items[0].pricePerUnit;
-      originalName = exchangeReceipt.items[0].productName;
-      originalSku = exchangeReceipt.items[0].sku;
+      itemsToExchange = [exchangeReceipt.items[0]];
     } else {
-      originalProductId = exchangeReceipt.productId;
-      originalSize = exchangeReceipt.size;
-      originalQuantity = exchangeReceipt.quantity;
-      originalPrice = exchangeReceipt.pricePerUnit;
-      originalName = exchangeReceipt.productName;
-      originalSku = exchangeReceipt.sku;
-   }
+      // Old format
+      itemsToExchange = [{
+        productId: exchangeReceipt.productId,
+        productName: exchangeReceipt.productName,
+        sku: exchangeReceipt.sku,
+        size: exchangeReceipt.size,
+        quantity: exchangeReceipt.quantity,
+        pricePerUnit: exchangeReceipt.pricePerUnit
+      }];
+    }
 
-    // Get the product objects from products array
-    const originalProduct = products.find(p => p.id === originalProductId);
     const newProduct = exchangeProduct;
-
-    if (!originalProduct || !newProduct) {
+    
+    if (!newProduct) {
       alert('Product not found in inventory');
       return;
     }
 
-    // Check if new product has enough stock
     // Check if new product has enough stock
     if (!newProduct.sizes || !newProduct.sizes[exchangeSize]) {
       alert('Size not available');
       return;
     }
 
+    const totalExchangeQuantity = itemsToExchange.reduce((sum, item) => sum + item.quantity, 0);
+    
     if (exchangeQuantity > newProduct.sizes[exchangeSize]) {
       alert(`Not enough stock for size ${exchangeSize}. Available: ${newProduct.sizes[exchangeSize]}`);
       return;
     }
 
-    // Check if exchanging within the same product or different products
-    if (originalProductId === exchangeProduct.id) {
-      // Same product - only update size distribution, total stock stays the same
-      const productRef = doc(db, 'products', originalProductId);
-      const updatedSizes = { ...originalProduct.sizes };
-      
-      // Check if exchanging the same size (shouldn't happen, but just in case)
-      if (originalSize === exchangeSize) {
-        alert('Cannot exchange for the same size. Please select a different size.');
-        return;
-      }
-      
-      // Add back the original size (what customer is returning)
-      updatedSizes[originalSize] = (updatedSizes[originalSize] || 0) + originalQuantity;
-      
-      // Deduct the new size (what customer is taking)
-      updatedSizes[exchangeSize] = (updatedSizes[exchangeSize] || 0) - exchangeQuantity;
-      
-      await updateDoc(productRef, {
-        sizes: updatedSizes
-        // Note: stock stays the same because we're returning items and taking items!
-      });
-    } else {
-      // Different products - update both products
-      
-      // Return original product to stock
-      const originalProductRef = doc(db, 'products', originalProductId);
-      const originalUpdatedSizes = { ...originalProduct.sizes };
-      originalUpdatedSizes[originalSize] = (originalUpdatedSizes[originalSize] || 0) + originalQuantity;
-      
-      await updateDoc(originalProductRef, {
-        stock: originalProduct.stock + originalQuantity,
-        sizes: originalUpdatedSizes
-      });
-      
-      // Deduct new product from stock
-      const newProductRef = doc(db, 'products', exchangeProduct.id);
-      const newUpdatedSizes = { ...newProduct.sizes };
-      newUpdatedSizes[exchangeSize] = newUpdatedSizes[exchangeSize] - exchangeQuantity;
-      
-      await updateDoc(newProductRef, {
-        stock: newProduct.stock - exchangeQuantity,
-        sizes: newUpdatedSizes
-      });
-    }
+    // Return all original items to stock
+   // Return all original items to stock
+// Return all original items to stock
+// Return all original items to stock
+for (const item of itemsToExchange) {
+  const originalProduct = products.find(p => p.id === item.productId);
+  
+  if (!originalProduct) {
+    console.error(`Product not found: ${item.productId}`);
+    alert(`Error: Product ${item.productName} not found in inventory`);
+    return;
+  }
+  
+  const originalProductRef = doc(db, 'products', item.productId);
+  const originalUpdatedSizes = { ...originalProduct.sizes };
+  
+  // Make sure we're adding back the correct quantity
+  const currentSizeStock = originalUpdatedSizes[item.size] || 0;
+  const newSizeStock = currentSizeStock + item.quantity;
+  originalUpdatedSizes[item.size] = newSizeStock;
+  
+  const newTotalStock = originalProduct.stock + item.quantity;
+  
+  console.log(`🔄 EXCHANGE RETURN: ${item.productName} (${item.productId})`);
+  console.log(`   Size ${item.size}: ${currentSizeStock} → ${newSizeStock} (+${item.quantity})`);
+  console.log(`   Total stock: ${originalProduct.stock} → ${newTotalStock}`);
+  
+  try {
+    await updateDoc(originalProductRef, {
+      stock: newTotalStock,
+      sizes: originalUpdatedSizes
+    });
+    console.log(`✅ Successfully returned ${item.quantity}x ${item.productName} to stock`);
+  } catch (error) {
+    console.error(`❌ Failed to update stock for ${item.productName}:`, error);
+    alert(`Failed to return ${item.productName} to stock. Please try again.`);
+    return;
+  }
+}
 
+// Deduct new product from stock
+const newProductRef = doc(db, 'products', exchangeProduct.id);
+const isSameProduct = exchangeProduct.id === itemsToExchange[0].productId;
+
+if (isSameProduct) {
+  // Same product, just different size - update only the size quantities
+  const newUpdatedSizes = { ...exchangeProduct.sizes };
+  const originalSize = itemsToExchange[0].size;
+  const originalQuantity = itemsToExchange[0].quantity;
+  
+  // Add back the original size stock
+  newUpdatedSizes[originalSize] = (newUpdatedSizes[originalSize] || 0) + originalQuantity;
+  // Deduct the new size stock
+  newUpdatedSizes[exchangeSize] = newUpdatedSizes[exchangeSize] - exchangeQuantity;
+  
+  console.log(`Same product exchange: Size ${originalSize} ↔ Size ${exchangeSize}`);
+  console.log(`Size ${originalSize}: ${newUpdatedSizes[originalSize] - originalQuantity} → ${newUpdatedSizes[originalSize]} (+${originalQuantity})`);
+  console.log(`Size ${exchangeSize}: ${newUpdatedSizes[exchangeSize] + exchangeQuantity} → ${newUpdatedSizes[exchangeSize]} (-${exchangeQuantity})`);
+  
+  await updateDoc(newProductRef, {
+    sizes: newUpdatedSizes
+    // Stock total stays the same: +1 -1 = 0
+  });
+}
+else {
+  // Different product - deduct from new product
+  const newUpdatedSizes = { ...exchangeProduct.sizes };
+  newUpdatedSizes[exchangeSize] = newUpdatedSizes[exchangeSize] - exchangeQuantity;
+  
+  console.log(`Different product exchange: Deducting ${exchangeQuantity}x ${exchangeProduct.name}`);
+  console.log(`Total stock: ${exchangeProduct.stock} → ${exchangeProduct.stock - exchangeQuantity}`);
+  
+  await updateDoc(newProductRef, {
+    stock: exchangeProduct.stock - exchangeQuantity,
+    sizes: newUpdatedSizes
+  });
+}
     // Calculate price difference
-    const originalTotal = originalPrice * originalQuantity;
+    const originalTotal = itemsToExchange.reduce((sum, item) => sum + (item.pricePerUnit * item.quantity), 0);
     const newTotal = exchangeProduct.price * exchangeQuantity;
     const priceDifference = newTotal - originalTotal;
 
@@ -504,14 +528,14 @@ const handleExchange = async () => {
     const exchangeRecord = {
       type: 'exchange',
       originalReceiptId: exchangeReceipt.id,
-      originalProduct: {
-        id: originalProductId,
-        name: originalName,
-        sku: originalSku,
-        size: originalSize,
-        quantity: originalQuantity,
-        price: originalPrice
-      },
+      originalProducts: itemsToExchange.map(item => ({
+        id: item.productId,
+        name: item.productName,
+        sku: item.sku,
+        size: item.size,
+        quantity: item.quantity,
+        price: item.pricePerUnit
+      })),
       newProduct: {
         id: exchangeProduct.id,
         name: exchangeProduct.name || exchangeProduct['name '] || '',
@@ -543,7 +567,8 @@ const handleExchange = async () => {
     });
 
     setShowExchangeModal(false);
-    alert(`✅ Exchange processed successfully!\n${priceDifference >= 0 ? 'Amount to collect: R' + priceDifference.toFixed(2) : 'Refund amount: R' + Math.abs(priceDifference).toFixed(2)}`);
+    setSelectedExchangeItems([]);
+    alert(`✅ Exchange processed successfully!\n${itemsToExchange.length} item(s) exchanged.\n${priceDifference >= 0 ? 'Amount to collect: R' + priceDifference.toFixed(2) : 'Refund amount: R' + Math.abs(priceDifference).toFixed(2)}`);
   } catch (error) {
     console.error('Error processing exchange:', error);
     alert('❌ Failed to process exchange. Please try again.');
@@ -880,7 +905,7 @@ const templateParams = {
   }
 };
 
- const filteredSales = salesHistory.filter(sale => {
+ const filteredSales = (salesHistory || []).filter(sale => {
   const emailMatch = searchEmail === '' || 
     (sale.customerEmail && sale.customerEmail.toLowerCase().includes(searchEmail.toLowerCase()));
   
@@ -1046,7 +1071,7 @@ const templateParams = {
                 </div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                  {filteredSales.map((receipt) => (
+                  {(filteredSales || []).map((receipt) => (
                     <div key={receipt.id} style={{ border: '2px solid #dbeafe', borderRadius: '1rem', padding: '1rem', background: 'white' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1rem' }}>
                         <div>
@@ -1066,27 +1091,37 @@ const templateParams = {
                           </div>
                         </div>
                       </div>
-                     <div style={{ fontSize: '0.875rem', background: '#eff6ff', padding: '0.75rem', borderRadius: '0.5rem' }}>
-  <div style={{ display: 'flex', justifyContent: 'space-between', color: '#1e3a8a' }}>
-    {receipt.type === 'exchange' ? (
+<div style={{ fontSize: '0.875rem', background: '#eff6ff', padding: '0.75rem', borderRadius: '0.5rem' }}>
+  {receipt.type === 'exchange' ? (
+    <div style={{ display: 'flex', justifyContent: 'space-between', color: '#1e3a8a' }}>
       <span>
-        {receipt.newProduct.name} ({receipt.newProduct.sku}) - Size {receipt.newProduct.size}
+        {receipt.newProduct?.name} ({receipt.newProduct?.sku}) - Size {receipt.newProduct?.size}
         <br />
         <span style={{ fontSize: '0.75rem', color: '#6b7280' }}>
-          (Exchanged from: {receipt.originalProduct.name} - Size {receipt.originalProduct.size})
+        (Exchanged from: {(receipt.originalProducts || []).map(p => p.name).join(', ')})
         </span>
       </span>
-    ) : (
+      <span>{receipt.newProduct?.quantity}x R{receipt.newProduct?.price?.toFixed(2) || '0.00'}</span>
+    </div>
+  ) : receipt.items && receipt.items.length > 0 ? (
+    // Multi-item receipt
+    <div>
+      {(receipt.items || []).map((item, idx) => (
+        <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', color: '#1e3a8a', marginBottom: idx < receipt.items.length - 1 ? '0.5rem' : '0' }}>
+          <span>{item.productName} ({item.sku}) - Size {item.size}</span>
+          <span>{item.quantity}x R{item.pricePerUnit?.toFixed(2) || '0.00'}</span>
+        </div>
+      ))}
+    </div>
+  ) : (
+   // Old single-item format (backward compatibility)
+    <div style={{ display: 'flex', justifyContent: 'space-between', color: '#1e3a8a' }}>
       <span>{receipt.productName} ({receipt.sku}) - Size {receipt.size}</span>
-    )}
-    {receipt.type === 'exchange' ? (
-      <span>{receipt.newProduct.quantity}x R{receipt.newProduct.price.toFixed(2)}</span>
-    ) : (
       <span>{receipt.quantity}x R{receipt.pricePerUnit ? receipt.pricePerUnit.toFixed(2) : '0.00'}</span>
-    )}
-  </div>
+    </div>
+  )}
 </div>
-                    </div>
+                   </div>
                   ))}
                 </div>
               )}
@@ -1094,7 +1129,8 @@ const templateParams = {
           </div>
         )}
       </div>
-{showCart && (
+
+      {showCart && (
   <div style={{ position: 'fixed', inset: '0', background: 'rgba(30, 64, 175, 0.4)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem', zIndex: '50' }}>
     <div style={{ background: 'white', borderRadius: '1rem', maxWidth: '48rem', width: '100%', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 25px 50px -12px rgba(37, 99, 235, 0.25)', border: '2px solid #dbeafe' }}>
       <div style={{ position: 'sticky', top: '0', background: 'white', borderBottom: '1px solid #e5e7eb', padding: '1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', zIndex: '10' }}>
@@ -1281,125 +1317,24 @@ const templateParams = {
     </div>
   )}
 
-  {showExchangeModal && exchangeReceipt && (
-    <div style={{ position: 'fixed', inset: '0', background: 'rgba(139, 92, 246, 0.4)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem', zIndex: '50' }}>
-      <div style={{ background: 'white', borderRadius: '1rem', maxWidth: '48rem', width: '100%', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 25px 50px -12px rgba(139, 92, 246, 0.25)', border: '2px solid #a78bfa' }}>
-        <div style={{ position: 'sticky', top: '0', background: 'white', borderBottom: '1px solid #e5e7eb', padding: '1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', zIndex: '10' }}>
-          <h3 style={{ fontSize: '1.25rem', fontWeight: '600', color: '#7c3aed' }}>Process Exchange</h3>
-          <button onClick={() => setShowExchangeModal(false)} style={{ color: '#9ca3af', background: 'none', border: 'none', cursor: 'pointer' }}>
-            <X style={{ width: '24px', height: '24px' }} />
-          </button>
-        </div>
-
-        <div style={{ padding: '1.5rem' }}>
-          {exchangeReceipt.items && exchangeReceipt.items.length > 1 && (
-            <div style={{ marginBottom: '1.5rem' }}>
-              <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '600', color: '#7c3aed', marginBottom: '0.5rem' }}>
-                Select Product to Exchange
-              </label>
-              <select 
-                value={selectedExchangeItem !== null ? selectedExchangeItem : ''} 
-                onChange={(e) => { setSelectedExchangeItem(e.target.value === '' ? null : parseInt(e.target.value)); setExchangeQuantity(1); }} 
-                style={{ width: '100%', padding: '0.75rem', border: '2px solid #a78bfa', borderRadius: '0.5rem', fontSize: '1rem', color: '#000', background: 'white' }}
-              >
-                <option value="">-- Select original product --</option>
-                {exchangeReceipt.items.map((item, index) => (
-                  <option key={index} value={index}>
-                    {item.productName} - Size {item.size} ({item.quantity}x R{item.pricePerUnit.toFixed(2)})
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
-
-          {((exchangeReceipt.items && exchangeReceipt.items.length > 1 && selectedExchangeItem !== null) || 
-            (exchangeReceipt.items && exchangeReceipt.items.length === 1) || 
-            !exchangeReceipt.items) && (
-            <>
-              <div style={{ background: '#faf5ff', padding: '1rem', borderRadius: '0.5rem', marginBottom: '1.5rem' }}>
-                <h4 style={{ fontWeight: '600', color: '#7c3aed', marginBottom: '0.5rem' }}>Original Purchase</h4>
-                <div style={{ fontSize: '0.875rem', color: '#000' }}>
-                  {exchangeReceipt.items ? (
-                    <>
-                      <div>{exchangeReceipt.items[selectedExchangeItem || 0].productName} - Size {exchangeReceipt.items[selectedExchangeItem || 0].size}</div>
-                      <div>{exchangeReceipt.items[selectedExchangeItem || 0].quantity}x R{exchangeReceipt.items[selectedExchangeItem || 0].pricePerUnit.toFixed(2)}</div>
-                    </>
-                  ) : (
-                    <>
-                      <div>{exchangeReceipt.productName} - Size {exchangeReceipt.size}</div>
-                      <div>{exchangeReceipt.quantity}x R{exchangeReceipt.pricePerUnit.toFixed(2)}</div>
-                    </>
-                  )}
-                </div>
-              </div>
-
-              <div style={{ marginBottom: '1.5rem' }}>
-                <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '600', color: '#7c3aed', marginBottom: '0.5rem' }}>
-                  Select New Product to Exchange
-                </label>
-                <select onChange={(e) => { const product = products.find(p => p.id === e.target.value); setExchangeProduct(product || null); setExchangeSize(''); }} style={{ width: '100%', padding: '0.75rem', border: '2px solid #a78bfa', borderRadius: '0.5rem', fontSize: '1rem', color: '#000', background: 'white' }}>
-                  <option value="">-- Select a product --</option>
-                  {products.map(product => (
-                    <option key={product.id} value={product.id}>
-                      {product.name} (R{product.price})
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {exchangeProduct && (
-                <>
-                  <div style={{ marginBottom: '1.5rem' }}>
-                    <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '600', color: '#7c3aed', marginBottom: '0.5rem' }}>
-                      Select Size
-                    </label>
-                    <select value={exchangeSize} onChange={(e) => setExchangeSize(e.target.value)} style={{ width: '100%', padding: '0.75rem', border: '2px solid #a78bfa', borderRadius: '0.5rem', fontSize: '1rem', color: '#000', background: 'white' }}>
-                      <option value="">-- Select a size --</option>
-                      {exchangeProduct.sizes && Object.entries(exchangeProduct.sizes).map(([size, stock]) => (
-                        <option key={size} value={size} disabled={stock === 0}>
-                          {size} ({stock} available)
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div style={{ marginBottom: '1.5rem' }}>
-                    <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '600', color: '#7c3aed', marginBottom: '0.5rem' }}>
-                      Quantity
-                    </label>
-                    <input type="number" min="1" max={exchangeSize && exchangeProduct.sizes ? exchangeProduct.sizes[exchangeSize] : 0} value={exchangeQuantity} onChange={(e) => setExchangeQuantity(Math.min(Math.max(1, parseInt(e.target.value) || 1), exchangeSize && exchangeProduct.sizes ? exchangeProduct.sizes[exchangeSize] : 0))} style={{ width: '100%', padding: '0.75rem', border: '2px solid #a78bfa', borderRadius: '0.5rem', fontSize: '1rem', color: '#000', background: 'white' }} />
-                  </div>
-
-                  <button onClick={handleExchange} style={{ width: '100%', background: 'linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%)', color: 'white', padding: '0.75rem', borderRadius: '0.5rem', fontWeight: '600', border: 'none', cursor: 'pointer' }}>
-                    Process Exchange
-                  </button>
-                </>
-              )}
-            </>
-          )}
-        </div>
-      </div>
-    </div>
-  )}
-
   {showReturnModal && returnReceipt && (
   <div style={{ position: 'fixed', inset: '0', background: 'rgba(239, 68, 68, 0.4)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem', zIndex: '50' }}>
-    <div style={{ background: 'white', borderRadius: '1rem', maxWidth: '32rem', width: '100%', maxHeight: '90vh', overflowY: 'auto', padding: '1.5rem', boxShadow: '0 25px 50px -12px rgba(239, 68, 68, 0.25)', border: '2px solid #fecaca' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+    <div style={{ background: 'white', borderRadius: '1rem', maxWidth: '48rem', width: '100%', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 25px 50px -12px rgba(239, 68, 68, 0.25)', border: '2px solid #fca5a5' }}>
+      <div style={{ position: 'sticky', top: '0', background: 'white', borderBottom: '1px solid #e5e7eb', padding: '1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', zIndex: '10' }}>
         <h3 style={{ fontSize: '1.25rem', fontWeight: '600', color: '#dc2626' }}>Process Return</h3>
         <button onClick={() => { setShowReturnModal(false); setSelectedReturnItems([]); }} style={{ color: '#9ca3af', background: 'none', border: 'none', cursor: 'pointer' }}>
           <X style={{ width: '24px', height: '24px' }} />
         </button>
       </div>
 
-      <div style={{ padding: '0' }}>
+      <div style={{ padding: '1.5rem' }}>
         {returnReceipt.items && returnReceipt.items.length > 1 ? (
           <>
             <div style={{ marginBottom: '1.5rem' }}>
               <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '600', color: '#dc2626', marginBottom: '0.75rem' }}>
                 Select Products to Return (check all that apply)
               </label>
-              <div style={{ maxHeight: '300px', overflowY: 'auto', border: '2px solid #fecaca', borderRadius: '0.5rem', padding: '0.5rem' }}>
+              <div style={{ maxHeight: '300px', overflowY: 'auto', border: '2px solid #fca5a5', borderRadius: '0.5rem', padding: '0.5rem' }}>
                 {returnReceipt.items.map((item, index) => (
                   <label 
                     key={index} 
@@ -1441,14 +1376,19 @@ const templateParams = {
             </div>
 
             {selectedReturnItems.length > 0 && (
-              <div style={{ background: '#fef2f2', padding: '1rem', borderRadius: '0.5rem', marginBottom: '1.5rem', border: '2px solid #fecaca' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
-                  <span style={{ fontWeight: '600', color: '#dc2626' }}>Items to Return:</span>
-                  <span style={{ fontWeight: '600', color: '#111827' }}>{selectedReturnItems.length}</span>
+              <div style={{ background: '#fef2f2', padding: '1rem', borderRadius: '0.5rem', marginBottom: '1.5rem', border: '2px solid #fca5a5' }}>
+                <h4 style={{ fontWeight: '600', color: '#dc2626', marginBottom: '0.5rem' }}>Items to Return</h4>
+                <div style={{ fontSize: '0.875rem', color: '#000', marginBottom: '0.5rem' }}>
+                  {selectedReturnItems.map(index => {
+                    const item = returnReceipt.items[index];
+                    return (
+                      <div key={index}>• {item.quantity}x {item.productName} (Size {item.size})</div>
+                    );
+                  })}
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span style={{ fontWeight: '600', color: '#dc2626' }}>Total Refund:</span>
-                  <span style={{ fontSize: '1.5rem', fontWeight: '700', color: '#dc2626' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '0.5rem', paddingTop: '0.5rem', borderTop: '1px solid #e5e7eb' }}>
+                  <span style={{ fontWeight: '600', color: '#dc2626' }}>Refund Amount:</span>
+                  <span style={{ fontWeight: '700', color: '#dc2626' }}>
                     R{selectedReturnItems.reduce((sum, index) => {
                       const item = returnReceipt.items[index];
                       return sum + (item.pricePerUnit * item.quantity);
@@ -1459,7 +1399,7 @@ const templateParams = {
             )}
 
             <button 
-              onClick={handleReturn}
+              onClick={handleReturn} 
               disabled={selectedReturnItems.length === 0}
               style={{ 
                 width: '100%', 
@@ -1478,42 +1418,244 @@ const templateParams = {
         ) : (
           <>
             <div style={{ background: '#fef2f2', padding: '1rem', borderRadius: '0.5rem', marginBottom: '1.5rem' }}>
-              <h4 style={{ fontWeight: '600', color: '#dc2626', marginBottom: '0.5rem' }}>Original Purchase</h4>
-              <div style={{ fontSize: '0.875rem', color: '#1f2937' }}>
+              <h4 style={{ fontWeight: '600', color: '#dc2626', marginBottom: '0.5rem' }}>Return Details</h4>
+              <div style={{ fontSize: '0.875rem', color: '#000' }}>
                 {returnReceipt.items && returnReceipt.items.length === 1 ? (
                   <>
                     <div>{returnReceipt.items[0].productName} - Size {returnReceipt.items[0].size}</div>
-                    <div>Quantity: {returnReceipt.items[0].quantity}</div>
-                    <div>Price: R{(returnReceipt.items[0].pricePerUnit * returnReceipt.items[0].quantity).toFixed(2)}</div>
+                    <div>{returnReceipt.items[0].quantity}x R{returnReceipt.items[0].pricePerUnit.toFixed(2)}</div>
                   </>
                 ) : (
                   <>
                     <div>{returnReceipt.productName} - Size {returnReceipt.size}</div>
-                    <div>Quantity: {returnReceipt.quantity}</div>
-                    <div>Price: R{(returnReceipt.pricePerUnit * returnReceipt.quantity).toFixed(2)}</div>
+                    <div>{returnReceipt.quantity}x R{returnReceipt.pricePerUnit.toFixed(2)}</div>
                   </>
                 )}
               </div>
             </div>
 
-            <div style={{ background: '#fef2f2', padding: '1rem', borderRadius: '0.5rem', marginBottom: '1.5rem', border: '2px solid #fecaca' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span style={{ fontWeight: '600', color: '#dc2626' }}>Refund Amount:</span>
-                <span style={{ fontSize: '1.5rem', fontWeight: '700', color: '#dc2626' }}>
-                  R{returnReceipt.items && returnReceipt.items.length === 1
-                    ? (returnReceipt.items[0].pricePerUnit * returnReceipt.items[0].quantity).toFixed(2)
-                    : (returnReceipt.pricePerUnit * returnReceipt.quantity).toFixed(2)
-                  }
-                </span>
+            <button onClick={handleReturn} style={{ width: '100%', background: 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)', color: 'white', padding: '0.75rem', borderRadius: '0.5rem', fontWeight: '600', border: 'none', cursor: 'pointer' }}>
+              Confirm Return
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  </div>
+)}
+
+  {showExchangeModal && exchangeReceipt && (
+  <div style={{ position: 'fixed', inset: '0', background: 'rgba(139, 92, 246, 0.4)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem', zIndex: '50' }}>
+    <div style={{ background: 'white', borderRadius: '1rem', maxWidth: '48rem', width: '100%', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 25px 50px -12px rgba(139, 92, 246, 0.25)', border: '2px solid #a78bfa' }}>
+      <div style={{ position: 'sticky', top: '0', background: 'white', borderBottom: '1px solid #e5e7eb', padding: '1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', zIndex: '10' }}>
+        <h3 style={{ fontSize: '1.25rem', fontWeight: '600', color: '#7c3aed' }}>Process Exchange</h3>
+        <button onClick={() => { setShowExchangeModal(false); setSelectedExchangeItems([]); }} style={{ color: '#9ca3af', background: 'none', border: 'none', cursor: 'pointer' }}>
+          <X style={{ width: '24px', height: '24px' }} />
+        </button>
+      </div>
+
+      <div style={{ padding: '1.5rem' }}>
+        {exchangeReceipt.items && exchangeReceipt.items.length > 1 ? (
+          <>
+            <div style={{ marginBottom: '1.5rem' }}>
+              <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '600', color: '#7c3aed', marginBottom: '0.75rem' }}>
+                Select Products to Exchange (check all that apply)
+              </label>
+              <div style={{ maxHeight: '300px', overflowY: 'auto', border: '2px solid #a78bfa', borderRadius: '0.5rem', padding: '0.5rem' }}>
+                {exchangeReceipt.items.map((item, index) => (
+                  <label 
+                    key={index} 
+                    style={{ 
+                      display: 'flex', 
+                      alignItems: 'center', 
+                      padding: '0.75rem', 
+                      background: selectedExchangeItems.includes(index) ? '#faf5ff' : 'white',
+                      borderRadius: '0.5rem',
+                      marginBottom: '0.5rem',
+                      cursor: 'pointer',
+                      border: selectedExchangeItems.includes(index) ? '2px solid #c4b5fd' : '1px solid #e5e7eb'
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedExchangeItems.includes(index)}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setSelectedExchangeItems([...selectedExchangeItems, index]);
+                        } else {
+                          setSelectedExchangeItems(selectedExchangeItems.filter(i => i !== index));
+                        }
+                      }}
+                      style={{ marginRight: '0.75rem', width: '18px', height: '18px', cursor: 'pointer' }}
+                    />
+                    <div style={{ flex: '1' }}>
+                      <div style={{ fontWeight: '600', color: '#111827' }}>{item.productName}</div>
+                      <div style={{ fontSize: '0.875rem', color: '#6b7280' }}>
+                        Size {item.size} • Qty: {item.quantity} • R{item.pricePerUnit.toFixed(2)} each
+                      </div>
+                    </div>
+                    <div style={{ fontWeight: '700', color: '#7c3aed' }}>
+                      R{(item.pricePerUnit * item.quantity).toFixed(2)}
+                    </div>
+                  </label>
+                ))}
               </div>
             </div>
 
-            <button 
-              onClick={handleReturn} 
-              style={{ width: '100%', background: 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)', color: 'white', padding: '0.75rem', borderRadius: '0.5rem', fontWeight: '600', border: 'none', cursor: 'pointer' }}
-            >
-              Process Return
-            </button>
+            {selectedExchangeItems.length > 0 && (
+              <div style={{ background: '#faf5ff', padding: '1rem', borderRadius: '0.5rem', marginBottom: '1.5rem', border: '2px solid #a78bfa' }}>
+                <h4 style={{ fontWeight: '600', color: '#7c3aed', marginBottom: '0.5rem' }}>Items to Exchange</h4>
+                <div style={{ fontSize: '0.875rem', color: '#000', marginBottom: '0.5rem' }}>
+                  {selectedExchangeItems.map(index => {
+                    const item = exchangeReceipt.items[index];
+                    return (
+                      <div key={index}>• {item.quantity}x {item.productName} (Size {item.size})</div>
+                    );
+                  })}
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '0.5rem', paddingTop: '0.5rem', borderTop: '1px solid #e5e7eb' }}>
+                  <span style={{ fontWeight: '600', color: '#7c3aed' }}>Total Value:</span>
+                  <span style={{ fontWeight: '700', color: '#7c3aed' }}>
+                    R{selectedExchangeItems.reduce((sum, index) => {
+                      const item = exchangeReceipt.items[index];
+                      return sum + (item.pricePerUnit * item.quantity);
+                    }, 0).toFixed(2)}
+                  </span>
+                </div>
+              </div>
+            )}
+
+            <div style={{ marginBottom: '1.5rem' }}>
+              <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '600', color: '#7c3aed', marginBottom: '0.5rem' }}>
+                Select New Product
+              </label>
+              <select 
+                onChange={(e) => { 
+                  const product = products.find(p => p.id === e.target.value); 
+                  setExchangeProduct(product || null); 
+                  setExchangeSize(''); 
+                }} 
+                style={{ width: '100%', padding: '0.75rem', border: '2px solid #a78bfa', borderRadius: '0.5rem', fontSize: '1rem', color: '#000', background: 'white' }}
+              >
+                <option value="">-- Select a product --</option>
+                {products.map(product => (
+                  <option key={product.id} value={product.id}>
+                    {product.name} (R{product.price})
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {exchangeProduct && (
+              <>
+                <div style={{ marginBottom: '1.5rem' }}>
+                  <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '600', color: '#7c3aed', marginBottom: '0.5rem' }}>
+                    Select Size
+                  </label>
+                  <select value={exchangeSize} onChange={(e) => setExchangeSize(e.target.value)} style={{ width: '100%', padding: '0.75rem', border: '2px solid #a78bfa', borderRadius: '0.5rem', fontSize: '1rem', color: '#000', background: 'white' }}>
+                    <option value="">-- Select a size --</option>
+                    {exchangeProduct.sizes && Object.entries(exchangeProduct.sizes).map(([size, stock]) => (
+                      <option key={size} value={size} disabled={stock === 0}>
+                        {size} ({stock} available)
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div style={{ marginBottom: '1.5rem' }}>
+                  <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '600', color: '#7c3aed', marginBottom: '0.5rem' }}>
+                    Quantity
+                  </label>
+                  <input 
+                    type="number" 
+                    min="1" 
+                    max={exchangeSize && exchangeProduct.sizes ? exchangeProduct.sizes[exchangeSize] : 0} 
+                    value={exchangeQuantity} 
+                    onChange={(e) => setExchangeQuantity(Math.min(Math.max(1, parseInt(e.target.value) || 1), exchangeSize && exchangeProduct.sizes ? exchangeProduct.sizes[exchangeSize] : 0))} 
+                    style={{ width: '100%', padding: '0.75rem', border: '2px solid #a78bfa', borderRadius: '0.5rem', fontSize: '1rem', color: '#000', background: 'white' }} 
+                  />
+                </div>
+
+                <button 
+                  onClick={handleExchange} 
+                  disabled={selectedExchangeItems.length === 0 || !exchangeSize}
+                  style={{ 
+                    width: '100%', 
+                    background: (selectedExchangeItems.length === 0 || !exchangeSize) ? '#d1d5db' : 'linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%)', 
+                    color: 'white', 
+                    padding: '0.75rem', 
+                    borderRadius: '0.5rem', 
+                    fontWeight: '600', 
+                    border: 'none', 
+                    cursor: (selectedExchangeItems.length === 0 || !exchangeSize) ? 'not-allowed' : 'pointer' 
+                  }}
+                >
+                  Process Exchange ({selectedExchangeItems.length} item{selectedExchangeItems.length !== 1 ? 's' : ''})
+                </button>
+              </>
+            )}
+          </>
+        ) : (
+          <>
+            <div style={{ background: '#faf5ff', padding: '1rem', borderRadius: '0.5rem', marginBottom: '1.5rem' }}>
+              <h4 style={{ fontWeight: '600', color: '#7c3aed', marginBottom: '0.5rem' }}>Original Purchase</h4>
+              <div style={{ fontSize: '0.875rem', color: '#000' }}>
+                {exchangeReceipt.items && exchangeReceipt.items.length === 1 ? (
+                  <>
+                    <div>{exchangeReceipt.items[0].productName} - Size {exchangeReceipt.items[0].size}</div>
+                    <div>{exchangeReceipt.items[0].quantity}x R{exchangeReceipt.items[0].pricePerUnit.toFixed(2)}</div>
+                  </>
+                ) : (
+                  <>
+                    <div>{exchangeReceipt.productName} - Size {exchangeReceipt.size}</div>
+                    <div>{exchangeReceipt.quantity}x R{exchangeReceipt.pricePerUnit.toFixed(2)}</div>
+                  </>
+                )}
+              </div>
+            </div>
+
+            <div style={{ marginBottom: '1.5rem' }}>
+              <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '600', color: '#7c3aed', marginBottom: '0.5rem' }}>
+                Select New Product to Exchange
+              </label>
+              <select onChange={(e) => { const product = products.find(p => p.id === e.target.value); setExchangeProduct(product || null); setExchangeSize(''); }} style={{ width: '100%', padding: '0.75rem', border: '2px solid #a78bfa', borderRadius: '0.5rem', fontSize: '1rem', color: '#000', background: 'white' }}>
+                <option value="">-- Select a product --</option>
+                {products.map(product => (
+                  <option key={product.id} value={product.id}>
+                    {product.name} (R{product.price})
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {exchangeProduct && (
+              <>
+                <div style={{ marginBottom: '1.5rem' }}>
+                  <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '600', color: '#7c3aed', marginBottom: '0.5rem' }}>
+                    Select Size
+                  </label>
+                  <select value={exchangeSize} onChange={(e) => setExchangeSize(e.target.value)} style={{ width: '100%', padding: '0.75rem', border: '2px solid #a78bfa', borderRadius: '0.5rem', fontSize: '1rem', color: '#000', background: 'white' }}>
+                    <option value="">-- Select a size --</option>
+                    {exchangeProduct.sizes && Object.entries(exchangeProduct.sizes).map(([size, stock]) => (
+                      <option key={size} value={size} disabled={stock === 0}>
+                        {size} ({stock} available)
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div style={{ marginBottom: '1.5rem' }}>
+                  <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '600', color: '#7c3aed', marginBottom: '0.5rem' }}>
+                    Quantity
+                  </label>
+                  <input type="number" min="1" max={exchangeSize && exchangeProduct.sizes ? exchangeProduct.sizes[exchangeSize] : 0} value={exchangeQuantity} onChange={(e) => setExchangeQuantity(Math.min(Math.max(1, parseInt(e.target.value) || 1), exchangeSize && exchangeProduct.sizes ? exchangeProduct.sizes[exchangeSize] : 0))} style={{ width: '100%', padding: '0.75rem', border: '2px solid #a78bfa', borderRadius: '0.5rem', fontSize: '1rem', color: '#000', background: 'white' }} />
+                </div>
+
+                <button onClick={handleExchange} style={{ width: '100%', background: 'linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%)', color: 'white', padding: '0.75rem', borderRadius: '0.5rem', fontWeight: '600', border: 'none', cursor: 'pointer' }}>
+                  Process Exchange
+                </button>
+              </>
+            )}
           </>
         )}
       </div>
