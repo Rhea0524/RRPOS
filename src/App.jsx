@@ -44,6 +44,8 @@ const [exchangeQuantity, setExchangeQuantity] = useState(1);const [returnQuantit
 const [showReturnModal, setShowReturnModal] = useState(false);
 const [returnReceipt, setReturnReceipt] = useState(null);
 const [selectedReturnItem, setSelectedReturnItem] = useState(null);
+const [selectedExchangeItem, setSelectedExchangeItem] = useState(null);
+const [selectedReturnItems, setSelectedReturnItems] = useState([]);
 
 
   useEffect(() => {
@@ -172,13 +174,10 @@ const getCartItemCount = () => {
   setSelectedProduct(null);
 };
 
-
-
-
 const openReturnModal = (receipt) => {
   setReturnReceipt(receipt);
   setReturnQuantity(1);
-   setSelectedReturnItem(null);  // ADD THIS LINE
+  setSelectedReturnItems([]); // Change to empty array
   setShowReturnModal(true);
 };
 
@@ -187,79 +186,70 @@ const handleReturn = async () => {
 
   const isMultiItem = returnReceipt.items && returnReceipt.items.length > 1;
   
-  let itemToReturn;
+  // Determine items to return
+  let itemsToReturn = [];
   
   if (isMultiItem) {
-    if (selectedReturnItem === null || selectedReturnItem === '') {
-      alert('Please select a product to return');
+    if (selectedReturnItems.length === 0) {
+      alert('Please select at least one product to return');
       return;
     }
-    itemToReturn = returnReceipt.items[selectedReturnItem];
+    itemsToReturn = selectedReturnItems.map(index => ({
+      ...returnReceipt.items[index],
+      originalIndex: index
+    }));
   } else if (returnReceipt.items && returnReceipt.items.length === 1) {
-    // Single item in items array
-    itemToReturn = returnReceipt.items[0];
+    itemsToReturn = [{ ...returnReceipt.items[0], originalIndex: 0 }];
   } else {
     // Old format - direct properties
-    itemToReturn = {
+    itemsToReturn = [{
       productId: returnReceipt.productId,
       productName: returnReceipt.productName,
       sku: returnReceipt.sku,
       size: returnReceipt.size,
       quantity: returnReceipt.quantity,
-      pricePerUnit: returnReceipt.pricePerUnit
-    };
+      pricePerUnit: returnReceipt.pricePerUnit,
+      originalIndex: null
+    }];
   }
 
-  // Validate return quantity
-  if (returnQuantity <= 0 || returnQuantity > itemToReturn.quantity) {
-    alert('Invalid return quantity');
-    return;
-  }
-
- if (!window.confirm(`Are you sure you want to return ${returnQuantity} unit(s) of ${itemToReturn.productName} (Size ${itemToReturn.size})?`)) {
+  // Build confirmation message
+  const itemsList = itemsToReturn.map(item => 
+    `• ${item.quantity}x ${item.productName} (Size ${item.size})`
+  ).join('\n');
+  
+  if (!window.confirm(`Are you sure you want to return:\n${itemsList}`)) {
     return;
   }
 
   try {
-    const product = products.find(p => p.id === itemToReturn.productId);
-    
-    if (!product) {
-      alert('Product not found in inventory');
-      return;
+    // Update stock for all items being returned
+    for (const item of itemsToReturn) {
+      const product = products.find(p => p.id === item.productId);
+      
+      if (!product) {
+        alert(`Product ${item.productName} not found in inventory`);
+        return;
+      }
+
+      const productRef = doc(db, 'products', item.productId);
+      const updatedSizes = { ...product.sizes };
+      updatedSizes[item.size] = (updatedSizes[item.size] || 0) + item.quantity;
+
+      await updateDoc(productRef, {
+        stock: product.stock + item.quantity,
+        sizes: updatedSizes
+      });
     }
 
-    // Update the product stock
-    // Update the product stock
-    const productRef = doc(db, 'products', itemToReturn.productId);
-    const updatedSizes = { ...product.sizes };
-    updatedSizes[itemToReturn.size] = (updatedSizes[itemToReturn.size] || 0) + returnQuantity;
-
-    await updateDoc(productRef, {
-      stock: product.stock + returnQuantity,
-      sizes: updatedSizes
-    });
-
-    // Mark the sale record based on return type
-   // Mark the sale record based on return type
+    // Update the sale record
     const saleRef = doc(db, 'sales', returnReceipt.id);
     
     if (isMultiItem) {
-      // Update the specific item in the items array
-      const updatedItems = [...returnReceipt.items];
-      
-      if (returnQuantity === itemToReturn.quantity) {
-        // Remove the item completely if fully returned
-        updatedItems.splice(selectedReturnItem, 1);
-      } else {
-        // Update the quantity if partially returned
-        updatedItems[selectedReturnItem] = {
-          ...itemToReturn,
-          quantity: itemToReturn.quantity - returnQuantity
-        };
-      }
-      
-      // Recalculate total
-      const newTotal = updatedItems.reduce((sum, item) => sum + (item.pricePerUnit * item.quantity), 0);
+      // Remove returned items from the items array
+      const updatedItems = returnReceipt.items.filter((_, index) => 
+        !selectedReturnItems.includes(index)
+      );
       
       if (updatedItems.length === 0) {
         // All items returned - mark receipt as returned
@@ -270,6 +260,8 @@ const handleReturn = async () => {
         });
       } else {
         // Update with remaining items
+        const newTotal = updatedItems.reduce((sum, item) => sum + (item.pricePerUnit * item.quantity), 0);
+        
         await updateDoc(saleRef, {
           items: updatedItems,
           total: newTotal,
@@ -280,34 +272,22 @@ const handleReturn = async () => {
       }
     } else {
       // Old format - single item receipt
-      if (returnQuantity === itemToReturn.quantity) {
-        await updateDoc(saleRef, {
-          returned: true,
-          returnedAt: new Date().toISOString()
-        });
-      } else {
-        const newQuantity = itemToReturn.quantity - returnQuantity;
-        const newTotal = newQuantity * itemToReturn.pricePerUnit;
-        
-        await updateDoc(saleRef, {
-          quantity: newQuantity,
-          total: newTotal,
-          partialReturn: true,
-          returnedQuantity: (returnReceipt.returnedQuantity || 0) + returnQuantity,
-          lastReturnAt: new Date().toISOString()
-        });
-      }
+      await updateDoc(saleRef, {
+        returned: true,
+        returnedAt: new Date().toISOString()
+      });
     }
 
-     setShowReturnModal(false);
-    setSelectedReturnItem(null);
+    setShowReturnModal(false);
+    setSelectedReturnItems([]);
     setReturnQuantity(1);
-    alert(`✅ Return processed successfully!\n${returnQuantity} unit(s) of ${itemToReturn.productName} (Size ${itemToReturn.size}) have been returned to stock.`);
+    alert(`✅ Return processed successfully!\n${itemsToReturn.length} product(s) returned to stock.`);
   } catch (error) {
     console.error('Error processing return:', error);
     alert('❌ Failed to process return. Please try again.');
   }
 };
+
 
 const completeCheckout = async () => {
   if (cart.length === 0) {
@@ -395,16 +375,11 @@ const completeCheckout = async () => {
   }
 };
 
-   
-    
-
-
-
-    const openExchangeModal = (receipt) => {
+ const openExchangeModal = (receipt) => {
   setExchangeReceipt(receipt);
   setExchangeProduct(null);
   setExchangeSize('');
-  setExchangeQuantity(receipt.quantity);
+  setExchangeQuantity(1); // Always start with 1
   setShowExchangeModal(true);
 };
 
@@ -420,14 +395,49 @@ const handleExchange = async () => {
   }
 
   try {
-    const originalProduct = products.find(p => p.id === exchangeReceipt.productId);
-    const newProduct = products.find(p => p.id === exchangeProduct.id);
+    const isMultiItem = exchangeReceipt.items && exchangeReceipt.items.length > 1;
+    
+    // Get original product data
+    let originalProductId, originalSize, originalQuantity, originalPrice, originalName, originalSku;
+    
+    if (isMultiItem) {
+      if (selectedExchangeItem === null || selectedExchangeItem === '') {
+        alert('Please select a product to exchange');
+        return;
+      }
+      const selectedItem = exchangeReceipt.items[selectedExchangeItem];
+      originalProductId = selectedItem.productId;
+      originalSize = selectedItem.size;
+      originalQuantity = selectedItem.quantity;
+      originalPrice = selectedItem.pricePerUnit;
+      originalName = selectedItem.productName;
+      originalSku = selectedItem.sku;
+    } else if (exchangeReceipt.items && exchangeReceipt.items.length === 1) {
+      originalProductId = exchangeReceipt.items[0].productId;
+      originalSize = exchangeReceipt.items[0].size;
+      originalQuantity = exchangeReceipt.items[0].quantity;
+      originalPrice = exchangeReceipt.items[0].pricePerUnit;
+      originalName = exchangeReceipt.items[0].productName;
+      originalSku = exchangeReceipt.items[0].sku;
+    } else {
+      originalProductId = exchangeReceipt.productId;
+      originalSize = exchangeReceipt.size;
+      originalQuantity = exchangeReceipt.quantity;
+      originalPrice = exchangeReceipt.pricePerUnit;
+      originalName = exchangeReceipt.productName;
+      originalSku = exchangeReceipt.sku;
+   }
+
+    // Get the product objects from products array
+    const originalProduct = products.find(p => p.id === originalProductId);
+    const newProduct = exchangeProduct;
 
     if (!originalProduct || !newProduct) {
       alert('Product not found in inventory');
       return;
     }
 
+    // Check if new product has enough stock
     // Check if new product has enough stock
     if (!newProduct.sizes || !newProduct.sizes[exchangeSize]) {
       alert('Size not available');
@@ -439,57 +449,54 @@ const handleExchange = async () => {
       return;
     }
 
-    // Return original product to stock
-    // Return original product to stock
-// Check if exchanging within the same product or different products
-// Check if exchanging within the same product or different products
-if (exchangeReceipt.productId === exchangeProduct.id) {
-  // Same product - only update size distribution, total stock stays the same
-  const productRef = doc(db, 'products', exchangeReceipt.productId);
-  const updatedSizes = { ...originalProduct.sizes };
-  
-  // Check if exchanging the same size (shouldn't happen, but just in case)
-  if (exchangeReceipt.size === exchangeSize) {
-    alert('Cannot exchange for the same size. Please select a different size.');
-    return;
-  }
-  
-  // Add back the original size (what customer is returning)
-  updatedSizes[exchangeReceipt.size] = (updatedSizes[exchangeReceipt.size] || 0) + exchangeReceipt.quantity;
-  
-  // Deduct the new size (what customer is taking)
-  updatedSizes[exchangeSize] = (updatedSizes[exchangeSize] || 0) - exchangeQuantity;
-  
-  await updateDoc(productRef, {
-    sizes: updatedSizes
-    // Note: stock stays the same because we're returning items and taking items!
-  });
-} else {
-  // Different products - update both products
-  
-  // Return original product to stock
-  const originalProductRef = doc(db, 'products', exchangeReceipt.productId);
-  const originalUpdatedSizes = { ...originalProduct.sizes };
-  originalUpdatedSizes[exchangeReceipt.size] = (originalUpdatedSizes[exchangeReceipt.size] || 0) + exchangeReceipt.quantity;
-  
-  await updateDoc(originalProductRef, {
-    stock: originalProduct.stock + exchangeReceipt.quantity,
-    sizes: originalUpdatedSizes
-  });
-  
-  // Deduct new product from stock
-  const newProductRef = doc(db, 'products', exchangeProduct.id);
-  const newUpdatedSizes = { ...newProduct.sizes };
-  newUpdatedSizes[exchangeSize] = newUpdatedSizes[exchangeSize] - exchangeQuantity;
-  
-  await updateDoc(newProductRef, {
-    stock: newProduct.stock - exchangeQuantity,
-    sizes: newUpdatedSizes
-  });
-}
+    // Check if exchanging within the same product or different products
+    if (originalProductId === exchangeProduct.id) {
+      // Same product - only update size distribution, total stock stays the same
+      const productRef = doc(db, 'products', originalProductId);
+      const updatedSizes = { ...originalProduct.sizes };
+      
+      // Check if exchanging the same size (shouldn't happen, but just in case)
+      if (originalSize === exchangeSize) {
+        alert('Cannot exchange for the same size. Please select a different size.');
+        return;
+      }
+      
+      // Add back the original size (what customer is returning)
+      updatedSizes[originalSize] = (updatedSizes[originalSize] || 0) + originalQuantity;
+      
+      // Deduct the new size (what customer is taking)
+      updatedSizes[exchangeSize] = (updatedSizes[exchangeSize] || 0) - exchangeQuantity;
+      
+      await updateDoc(productRef, {
+        sizes: updatedSizes
+        // Note: stock stays the same because we're returning items and taking items!
+      });
+    } else {
+      // Different products - update both products
+      
+      // Return original product to stock
+      const originalProductRef = doc(db, 'products', originalProductId);
+      const originalUpdatedSizes = { ...originalProduct.sizes };
+      originalUpdatedSizes[originalSize] = (originalUpdatedSizes[originalSize] || 0) + originalQuantity;
+      
+      await updateDoc(originalProductRef, {
+        stock: originalProduct.stock + originalQuantity,
+        sizes: originalUpdatedSizes
+      });
+      
+      // Deduct new product from stock
+      const newProductRef = doc(db, 'products', exchangeProduct.id);
+      const newUpdatedSizes = { ...newProduct.sizes };
+      newUpdatedSizes[exchangeSize] = newUpdatedSizes[exchangeSize] - exchangeQuantity;
+      
+      await updateDoc(newProductRef, {
+        stock: newProduct.stock - exchangeQuantity,
+        sizes: newUpdatedSizes
+      });
+    }
 
     // Calculate price difference
-    const originalTotal = exchangeReceipt.total;
+    const originalTotal = originalPrice * originalQuantity;
     const newTotal = exchangeProduct.price * exchangeQuantity;
     const priceDifference = newTotal - originalTotal;
 
@@ -498,12 +505,12 @@ if (exchangeReceipt.productId === exchangeProduct.id) {
       type: 'exchange',
       originalReceiptId: exchangeReceipt.id,
       originalProduct: {
-        id: exchangeReceipt.productId,
-        name: exchangeReceipt.productName,
-        sku: exchangeReceipt.sku,
-        size: exchangeReceipt.size,
-        quantity: exchangeReceipt.quantity,
-        price: exchangeReceipt.pricePerUnit
+        id: originalProductId,
+        name: originalName,
+        sku: originalSku,
+        size: originalSize,
+        quantity: originalQuantity,
+        price: originalPrice
       },
       newProduct: {
         id: exchangeProduct.id,
@@ -835,8 +842,7 @@ const templateParams = {
     date: receipt.date,
     company_name: "R&R AGENCIES",
     company_website: "www.randragencies.online",
-    company_email: "info@randragencies.online",
-    receipt_image: base64data
+    company_email: "info@randragencies.online"
 };
 
             // Send email using EmailJS
@@ -949,32 +955,31 @@ const templateParams = {
                   cursor: 'pointer'
                 }}
               >
-
-                <button
-  onClick={() => setShowCart(true)}
-  style={{ 
-    display: 'flex', 
-    alignItems: 'center', 
-    padding: '0.5rem 1rem', 
-    borderRadius: '0.5rem',
-    background: 'transparent',
-    color: '#4b5563',
-    fontWeight: '600',
-    border: 'none',
-    cursor: 'pointer',
-    position: 'relative'
-  }}
->
-  <ShoppingCart style={{ width: '20px', height: '20px', marginRight: '0.5rem' }} />
-  Cart
-  {cart.length > 0 && (
-    <span style={{ position: 'absolute', top: '0', right: '0', background: '#ef4444', color: 'white', borderRadius: '50%', width: '20px', height: '20px', fontSize: '0.75rem', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold' }}>
-      {getCartItemCount()}
-    </span>
-  )}
-</button>
                 <Receipt style={{ width: '20px', height: '20px', marginRight: '0.5rem' }} />
                 Sales
+              </button>
+              <button
+                onClick={() => setShowCart(true)}
+                style={{ 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  padding: '0.5rem 1rem', 
+                  borderRadius: '0.5rem',
+                  background: 'transparent',
+                  color: '#4b5563',
+                  fontWeight: '600',
+                  border: 'none',
+                  cursor: 'pointer',
+                  position: 'relative'
+                }}
+              >
+                <ShoppingCart style={{ width: '20px', height: '20px', marginRight: '0.5rem' }} />
+                Cart
+                {cart.length > 0 && (
+                  <span style={{ position: 'absolute', top: '0', right: '0', background: '#ef4444', color: 'white', borderRadius: '50%', width: '20px', height: '20px', fontSize: '0.75rem', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold' }}>
+                    {getCartItemCount()}
+                  </span>
+                )}
               </button>
             </div>
           </div>
@@ -1151,7 +1156,7 @@ const templateParams = {
               <input type="email" value={customerEmail} onChange={(e) => setCustomerEmail(e.target.value)} placeholder="customer@example.com" style={{ width: '100%', padding: '0.75rem 1rem', border: '2px solid #e5e7eb', borderRadius: '0.5rem', fontSize: '1rem', color: '#000', background: 'white' }} />
             </div>
 
-            <button onClick={completeCheckout} disabled={!customerEmail || !customerEmail.includes('@')} style={{ width: '100%', background: (!customerEmail || !customerEmail.includes('@')) ? '#d1d5db' : 'linear-gradient(135deg, #10b981 0%, #059669 100%)', color: 'white', padding: '1rem', borderRadius: '0.5rem', fontWeight: '600', border: 'none', cursor: (!customerEmail || !customerEmail.includes('@')) ? 'not-allowed' : 'pointer', fontSize: '1.125rem' }}>
+           <button onClick={completeCheckout} disabled={!customerEmail || !customerEmail.includes('@')} style={{ width: '100%', background: (!customerEmail || !customerEmail.includes('@')) ? '#d1d5db' : 'linear-gradient(135deg, #10b981 0%, #059669 100%)', color: 'white', padding: '1rem', borderRadius: '0.5rem', fontWeight: '600', border: 'none', cursor: (!customerEmail || !customerEmail.includes('@')) ? 'not-allowed' : 'pointer', fontSize: '1.125rem' }}>
               Complete Checkout
             </button>
           </>
@@ -1237,66 +1242,100 @@ const templateParams = {
         </div>
       )}
 
-{showSuccessModal && lastReceipt && (
-        <div style={{ position: 'fixed', inset: '0', background: 'rgba(30, 64, 175, 0.4)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem', zIndex: '50' }}>
-          <div style={{ background: 'white', borderRadius: '1rem', maxWidth: '32rem', width: '100%', maxHeight: '90vh', overflowY: 'auto', padding: '1.5rem', boxShadow: '0 25px 50px -12px rgba(37, 99, 235, 0.25)', border: '2px solid #dbeafe' }}>
-            <div style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
-              <div style={{ width: '64px', height: '64px', background: '#e0f2fe', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1rem' }}>
-                <svg style={{ width: '32px', height: '32px', color: '#0369a1' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"></path>
-                </svg>
-              </div>
-              <h2 style={{ fontSize: '1.5rem', fontWeight: '700', color: '#111827', marginBottom: '0.5rem' }}>Sale Complete!</h2>
-             <p style={{ color: '#111827' }}>Receipt sent to {lastReceipt.customerEmail}</p>
-            </div>
 
-            <div style={{ borderTop: '1px dashed #e5e7eb', borderBottom: '1px dashed #e5e7eb', paddingTop: '1rem', paddingBottom: '1rem', marginBottom: '1rem' }}>
-              <div style={{ fontSize: '0.875rem', color: '#111827', marginBottom: '0.25rem' }}>Receipt #{lastReceipt.id.slice(0, 8)}</div>
-              <div style={{ fontSize: '1.875rem', fontWeight: '700', color: '#0ea5e9', marginBottom: '0.75rem' }}>R{lastReceipt.total.toFixed(2)}</div>
-              
-              <div style={{ textAlign: 'left', fontSize: '0.875rem', maxHeight: '200px', overflowY: 'auto' }}>
-                {lastReceipt.items && lastReceipt.items.map((item, index) => (
-                  <div key={index} style={{ background: '#eff6ff', padding: '0.75rem', borderRadius: '0.5rem', marginBottom: '0.5rem' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', color: '#111827' }}>
-                      <span>{item.quantity}x {item.productName} (Size {item.size})</span>
-                      <span>R{item.subtotal.toFixed(2)}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
+  {showSuccessModal && lastReceipt && (
+    <div style={{ position: 'fixed', inset: '0', background: 'rgba(30, 64, 175, 0.4)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem', zIndex: '50' }}>
+      <div style={{ background: 'white', borderRadius: '1rem', maxWidth: '32rem', width: '100%', maxHeight: '90vh', overflowY: 'auto', padding: '1.5rem', boxShadow: '0 25px 50px -12px rgba(37, 99, 235, 0.25)', border: '2px solid #dbeafe' }}>
+        <div style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
+          <div style={{ width: '64px', height: '64px', background: '#e0f2fe', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1rem' }}>
+            <svg style={{ width: '32px', height: '32px', color: '#0369a1' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"></path>
+            </svg>
+          </div>
+          <h2 style={{ fontSize: '1.5rem', fontWeight: '700', color: '#111827', marginBottom: '0.5rem' }}>Sale Complete!</h2>
+          <p style={{ color: '#111827' }}>Receipt sent to {lastReceipt.customerEmail}</p>
+        </div>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-              <button onClick={() => setShowSuccessModal(false)} style={{ width: '100%', border: '2px solid #e5e7eb', color: '#374151', padding: '0.5rem', borderRadius: '0.5rem', background: 'white', cursor: 'pointer', fontWeight: '600' }}>
-                Close
-              </button>
-            </div>
+        <div style={{ borderTop: '1px dashed #e5e7eb', borderBottom: '1px dashed #e5e7eb', paddingTop: '1rem', paddingBottom: '1rem', marginBottom: '1rem' }}>
+          <div style={{ fontSize: '0.875rem', color: '#111827', marginBottom: '0.25rem' }}>Receipt #{lastReceipt.id.slice(0, 8)}</div>
+          <div style={{ fontSize: '1.875rem', fontWeight: '700', color: '#0ea5e9', marginBottom: '0.75rem' }}>R{lastReceipt.total.toFixed(2)}</div>
+          
+          <div style={{ textAlign: 'left', fontSize: '0.875rem', maxHeight: '200px', overflowY: 'auto' }}>
+            {lastReceipt.items && lastReceipt.items.map((item, index) => (
+              <div key={index} style={{ background: '#eff6ff', padding: '0.75rem', borderRadius: '0.5rem', marginBottom: '0.5rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', color: '#111827' }}>
+                  <span>{item.quantity}x {item.productName} (Size {item.size})</span>
+                  <span>R{item.subtotal.toFixed(2)}</span>
+                </div>
+              </div>
+            ))}
           </div>
         </div>
-      )}
 
-      {showExchangeModal && exchangeReceipt && (
-        <div style={{ position: 'fixed', inset: '0', background: 'rgba(139, 92, 246, 0.4)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem', zIndex: '50' }}>
-          <div style={{ background: 'white', borderRadius: '1rem', maxWidth: '48rem', width: '100%', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 25px 50px -12px rgba(139, 92, 246, 0.25)', border: '2px solid #a78bfa' }}>
-            <div style={{ position: 'sticky', top: '0', background: 'white', borderBottom: '1px solid #e5e7eb', padding: '1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', zIndex: '10' }}>
-              <h3 style={{ fontSize: '1.25rem', fontWeight: '600', color: '#7c3aed' }}>Process Exchange</h3>
-              <button onClick={() => setShowExchangeModal(false)} style={{ color: '#9ca3af', background: 'none', border: 'none', cursor: 'pointer' }}>
-                <X style={{ width: '24px', height: '24px' }} />
-              </button>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+          <button onClick={() => setShowSuccessModal(false)} style={{ width: '100%', border: '2px solid #e5e7eb', color: '#374151', padding: '0.5rem', borderRadius: '0.5rem', background: 'white', cursor: 'pointer', fontWeight: '600' }}>
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+  )}
+
+  {showExchangeModal && exchangeReceipt && (
+    <div style={{ position: 'fixed', inset: '0', background: 'rgba(139, 92, 246, 0.4)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem', zIndex: '50' }}>
+      <div style={{ background: 'white', borderRadius: '1rem', maxWidth: '48rem', width: '100%', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 25px 50px -12px rgba(139, 92, 246, 0.25)', border: '2px solid #a78bfa' }}>
+        <div style={{ position: 'sticky', top: '0', background: 'white', borderBottom: '1px solid #e5e7eb', padding: '1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', zIndex: '10' }}>
+          <h3 style={{ fontSize: '1.25rem', fontWeight: '600', color: '#7c3aed' }}>Process Exchange</h3>
+          <button onClick={() => setShowExchangeModal(false)} style={{ color: '#9ca3af', background: 'none', border: 'none', cursor: 'pointer' }}>
+            <X style={{ width: '24px', height: '24px' }} />
+          </button>
+        </div>
+
+        <div style={{ padding: '1.5rem' }}>
+          {exchangeReceipt.items && exchangeReceipt.items.length > 1 && (
+            <div style={{ marginBottom: '1.5rem' }}>
+              <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '600', color: '#7c3aed', marginBottom: '0.5rem' }}>
+                Select Product to Exchange
+              </label>
+              <select 
+                value={selectedExchangeItem !== null ? selectedExchangeItem : ''} 
+                onChange={(e) => { setSelectedExchangeItem(e.target.value === '' ? null : parseInt(e.target.value)); setExchangeQuantity(1); }} 
+                style={{ width: '100%', padding: '0.75rem', border: '2px solid #a78bfa', borderRadius: '0.5rem', fontSize: '1rem', color: '#000', background: 'white' }}
+              >
+                <option value="">-- Select original product --</option>
+                {exchangeReceipt.items.map((item, index) => (
+                  <option key={index} value={index}>
+                    {item.productName} - Size {item.size} ({item.quantity}x R{item.pricePerUnit.toFixed(2)})
+                  </option>
+                ))}
+              </select>
             </div>
+          )}
 
-            <div style={{ padding: '1.5rem' }}>
+          {((exchangeReceipt.items && exchangeReceipt.items.length > 1 && selectedExchangeItem !== null) || 
+            (exchangeReceipt.items && exchangeReceipt.items.length === 1) || 
+            !exchangeReceipt.items) && (
+            <>
               <div style={{ background: '#faf5ff', padding: '1rem', borderRadius: '0.5rem', marginBottom: '1.5rem' }}>
                 <h4 style={{ fontWeight: '600', color: '#7c3aed', marginBottom: '0.5rem' }}>Original Purchase</h4>
-               <div style={{ fontSize: '0.875rem', color: '#1f2937' }}>
-                  <div style={{ color: '#1f2937' }}>{exchangeReceipt.productName} - Size {exchangeReceipt.size}</div>
-                 <div style={{ color: '#1f2937' }}>{exchangeReceipt.quantity}x R{exchangeReceipt.pricePerUnit}</div>
+                <div style={{ fontSize: '0.875rem', color: '#000' }}>
+                  {exchangeReceipt.items ? (
+                    <>
+                      <div>{exchangeReceipt.items[selectedExchangeItem || 0].productName} - Size {exchangeReceipt.items[selectedExchangeItem || 0].size}</div>
+                      <div>{exchangeReceipt.items[selectedExchangeItem || 0].quantity}x R{exchangeReceipt.items[selectedExchangeItem || 0].pricePerUnit.toFixed(2)}</div>
+                    </>
+                  ) : (
+                    <>
+                      <div>{exchangeReceipt.productName} - Size {exchangeReceipt.size}</div>
+                      <div>{exchangeReceipt.quantity}x R{exchangeReceipt.pricePerUnit.toFixed(2)}</div>
+                    </>
+                  )}
                 </div>
               </div>
 
               <div style={{ marginBottom: '1.5rem' }}>
                 <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '600', color: '#7c3aed', marginBottom: '0.5rem' }}>
-                  Select Product to Exchange
+                  Select New Product to Exchange
                 </label>
                 <select onChange={(e) => { const product = products.find(p => p.id === e.target.value); setExchangeProduct(product || null); setExchangeSize(''); }} style={{ width: '100%', padding: '0.75rem', border: '2px solid #a78bfa', borderRadius: '0.5rem', fontSize: '1rem', color: '#000', background: 'white' }}>
                   <option value="">-- Select a product --</option>
@@ -1314,7 +1353,7 @@ const templateParams = {
                     <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '600', color: '#7c3aed', marginBottom: '0.5rem' }}>
                       Select Size
                     </label>
-                   <select value={exchangeSize} onChange={(e) => setExchangeSize(e.target.value)} style={{ width: '100%', padding: '0.75rem', border: '2px solid #a78bfa', borderRadius: '0.5rem', fontSize: '1rem', color: '#000', background: 'white' }}>
+                    <select value={exchangeSize} onChange={(e) => setExchangeSize(e.target.value)} style={{ width: '100%', padding: '0.75rem', border: '2px solid #a78bfa', borderRadius: '0.5rem', fontSize: '1rem', color: '#000', background: 'white' }}>
                       <option value="">-- Select a size --</option>
                       {exchangeProduct.sizes && Object.entries(exchangeProduct.sizes).map(([size, stock]) => (
                         <option key={size} value={size} disabled={stock === 0}>
@@ -1336,101 +1375,151 @@ const templateParams = {
                   </button>
                 </>
               )}
-            </div>
-          </div>
+            </>
+          )}
         </div>
-      )}
-      {showReturnModal && returnReceipt && (
+      </div>
+    </div>
+  )}
+
+  {showReturnModal && returnReceipt && (
   <div style={{ position: 'fixed', inset: '0', background: 'rgba(239, 68, 68, 0.4)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem', zIndex: '50' }}>
-    <div style={{ background: 'white', borderRadius: '1rem', maxWidth: '28rem', width: '100%', padding: '1.5rem', boxShadow: '0 25px 50px -12px rgba(239, 68, 68, 0.25)', border: '2px solid #fecaca' }}>
+    <div style={{ background: 'white', borderRadius: '1rem', maxWidth: '32rem', width: '100%', maxHeight: '90vh', overflowY: 'auto', padding: '1.5rem', boxShadow: '0 25px 50px -12px rgba(239, 68, 68, 0.25)', border: '2px solid #fecaca' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
         <h3 style={{ fontSize: '1.25rem', fontWeight: '600', color: '#dc2626' }}>Process Return</h3>
-        <button onClick={() => { setShowReturnModal(false); setSelectedReturnItem(null); }} style={{ color: '#9ca3af', background: 'none', border: 'none', cursor: 'pointer' }}>
+        <button onClick={() => { setShowReturnModal(false); setSelectedReturnItems([]); }} style={{ color: '#9ca3af', background: 'none', border: 'none', cursor: 'pointer' }}>
           <X style={{ width: '24px', height: '24px' }} />
         </button>
       </div>
 
-      {returnReceipt.items && returnReceipt.items.length > 1 && (
-        <div style={{ marginBottom: '1.5rem' }}>
-          <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '600', color: '#dc2626', marginBottom: '0.5rem' }}>
-            Select Product to Return
-          </label>
-          <select 
-            value={selectedReturnItem !== null ? selectedReturnItem : ''} 
-            onChange={(e) => { setSelectedReturnItem(e.target.value === '' ? null : parseInt(e.target.value)); setReturnQuantity(1); }} 
-            style={{ width: '100%', padding: '0.75rem', border: '2px solid #fecaca', borderRadius: '0.5rem', fontSize: '1rem', color: '#000', background: 'white' }}
-          >
-            <option value="">-- Select a product --</option>
-            {returnReceipt.items.map((item, index) => (
-              <option key={index} value={index}>
-                {item.productName} - Size {item.size} ({item.quantity}x R{item.pricePerUnit.toFixed(2)})
-              </option>
-            ))}
-          </select>
-        </div>
-      )}
-
-      {((returnReceipt.items && returnReceipt.items.length > 1 && selectedReturnItem !== null) || 
-        (returnReceipt.items && returnReceipt.items.length === 1) || 
-        !returnReceipt.items) && (
-        <>
-          <div style={{ background: '#fef2f2', padding: '1rem', borderRadius: '0.5rem', marginBottom: '1.5rem' }}>
-            <h4 style={{ fontWeight: '600', color: '#dc2626', marginBottom: '0.5rem' }}>Original Purchase</h4>
-            <div style={{ fontSize: '0.875rem', color: '#1f2937' }}>
-              {returnReceipt.items ? (
-                <>
-                  <div>{returnReceipt.items[selectedReturnItem || 0].productName} - Size {returnReceipt.items[selectedReturnItem || 0].size}</div>
-                  <div>Quantity purchased: {returnReceipt.items[selectedReturnItem || 0].quantity}</div>
-                  <div>Price per unit: R{returnReceipt.items[selectedReturnItem || 0].pricePerUnit.toFixed(2)}</div>
-                </>
-              ) : (
-                <>
-                  <div>{returnReceipt.productName} - Size {returnReceipt.size}</div>
-                  <div>Quantity purchased: {returnReceipt.quantity}</div>
-                  <div>Price per unit: R{returnReceipt.pricePerUnit.toFixed(2)}</div>
-                </>
-              )}
+      <div style={{ padding: '0' }}>
+        {returnReceipt.items && returnReceipt.items.length > 1 ? (
+          <>
+            <div style={{ marginBottom: '1.5rem' }}>
+              <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '600', color: '#dc2626', marginBottom: '0.75rem' }}>
+                Select Products to Return (check all that apply)
+              </label>
+              <div style={{ maxHeight: '300px', overflowY: 'auto', border: '2px solid #fecaca', borderRadius: '0.5rem', padding: '0.5rem' }}>
+                {returnReceipt.items.map((item, index) => (
+                  <label 
+                    key={index} 
+                    style={{ 
+                      display: 'flex', 
+                      alignItems: 'center', 
+                      padding: '0.75rem', 
+                      background: selectedReturnItems.includes(index) ? '#fef2f2' : 'white',
+                      borderRadius: '0.5rem',
+                      marginBottom: '0.5rem',
+                      cursor: 'pointer',
+                      border: selectedReturnItems.includes(index) ? '2px solid #fca5a5' : '1px solid #e5e7eb'
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedReturnItems.includes(index)}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setSelectedReturnItems([...selectedReturnItems, index]);
+                        } else {
+                          setSelectedReturnItems(selectedReturnItems.filter(i => i !== index));
+                        }
+                      }}
+                      style={{ marginRight: '0.75rem', width: '18px', height: '18px', cursor: 'pointer' }}
+                    />
+                    <div style={{ flex: '1' }}>
+                      <div style={{ fontWeight: '600', color: '#111827' }}>{item.productName}</div>
+                      <div style={{ fontSize: '0.875rem', color: '#6b7280' }}>
+                        Size {item.size} • Qty: {item.quantity} • R{item.pricePerUnit.toFixed(2)} each
+                      </div>
+                    </div>
+                    <div style={{ fontWeight: '700', color: '#dc2626' }}>
+                      R{(item.pricePerUnit * item.quantity).toFixed(2)}
+                    </div>
+                  </label>
+                ))}
+              </div>
             </div>
-          </div>
 
-          <div style={{ marginBottom: '1.5rem' }}>
-            <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '600', color: '#dc2626', marginBottom: '0.5rem' }}>
-              Quantity to Return
-            </label>
-            <input 
-              type="number" 
-              min="1" 
-              max={returnReceipt.items ? returnReceipt.items[selectedReturnItem || 0].quantity : returnReceipt.quantity}
-              value={returnQuantity} 
-              onChange={(e) => {
-                const maxQty = returnReceipt.items ? returnReceipt.items[selectedReturnItem || 0].quantity : returnReceipt.quantity;
-                setReturnQuantity(Math.min(Math.max(1, parseInt(e.target.value) || 1), maxQty));
-              }} 
-              style={{ width: '100%', padding: '0.75rem', border: '2px solid #fecaca', borderRadius: '0.5rem', fontSize: '1rem', color: '#000', background: 'white' }} 
-            />
-          </div>
+            {selectedReturnItems.length > 0 && (
+              <div style={{ background: '#fef2f2', padding: '1rem', borderRadius: '0.5rem', marginBottom: '1.5rem', border: '2px solid #fecaca' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
+                  <span style={{ fontWeight: '600', color: '#dc2626' }}>Items to Return:</span>
+                  <span style={{ fontWeight: '600', color: '#111827' }}>{selectedReturnItems.length}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span style={{ fontWeight: '600', color: '#dc2626' }}>Total Refund:</span>
+                  <span style={{ fontSize: '1.5rem', fontWeight: '700', color: '#dc2626' }}>
+                    R{selectedReturnItems.reduce((sum, index) => {
+                      const item = returnReceipt.items[index];
+                      return sum + (item.pricePerUnit * item.quantity);
+                    }, 0).toFixed(2)}
+                  </span>
+                </div>
+              </div>
+            )}
 
-          <div style={{ background: '#fef2f2', padding: '1rem', borderRadius: '0.5rem', marginBottom: '1.5rem', border: '2px solid #fecaca' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-              <span style={{ fontWeight: '600', color: '#dc2626' }}>Refund Amount:</span>
-              <span style={{ fontSize: '1.5rem', fontWeight: '700', color: '#dc2626' }}>
-                R{((returnReceipt.items ? returnReceipt.items[selectedReturnItem || 0].pricePerUnit : returnReceipt.pricePerUnit) * returnQuantity).toFixed(2)}
-              </span>
+            <button 
+              onClick={handleReturn}
+              disabled={selectedReturnItems.length === 0}
+              style={{ 
+                width: '100%', 
+                background: selectedReturnItems.length === 0 ? '#d1d5db' : 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)', 
+                color: 'white', 
+                padding: '0.75rem', 
+                borderRadius: '0.5rem', 
+                fontWeight: '600', 
+                border: 'none', 
+                cursor: selectedReturnItems.length === 0 ? 'not-allowed' : 'pointer' 
+              }}
+            >
+              Process Return ({selectedReturnItems.length} item{selectedReturnItems.length !== 1 ? 's' : ''})
+            </button>
+          </>
+        ) : (
+          <>
+            <div style={{ background: '#fef2f2', padding: '1rem', borderRadius: '0.5rem', marginBottom: '1.5rem' }}>
+              <h4 style={{ fontWeight: '600', color: '#dc2626', marginBottom: '0.5rem' }}>Original Purchase</h4>
+              <div style={{ fontSize: '0.875rem', color: '#1f2937' }}>
+                {returnReceipt.items && returnReceipt.items.length === 1 ? (
+                  <>
+                    <div>{returnReceipt.items[0].productName} - Size {returnReceipt.items[0].size}</div>
+                    <div>Quantity: {returnReceipt.items[0].quantity}</div>
+                    <div>Price: R{(returnReceipt.items[0].pricePerUnit * returnReceipt.items[0].quantity).toFixed(2)}</div>
+                  </>
+                ) : (
+                  <>
+                    <div>{returnReceipt.productName} - Size {returnReceipt.size}</div>
+                    <div>Quantity: {returnReceipt.quantity}</div>
+                    <div>Price: R{(returnReceipt.pricePerUnit * returnReceipt.quantity).toFixed(2)}</div>
+                  </>
+                )}
+              </div>
             </div>
-          </div>
 
-          <button 
-            onClick={handleReturn} 
-            style={{ width: '100%', background: 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)', color: 'white', padding: '0.75rem', borderRadius: '0.5rem', fontWeight: '600', border: 'none', cursor: 'pointer' }}
-          >
-            Process Return
-          </button>
-        </>
-      )}
+            <div style={{ background: '#fef2f2', padding: '1rem', borderRadius: '0.5rem', marginBottom: '1.5rem', border: '2px solid #fecaca' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span style={{ fontWeight: '600', color: '#dc2626' }}>Refund Amount:</span>
+                <span style={{ fontSize: '1.5rem', fontWeight: '700', color: '#dc2626' }}>
+                  R{returnReceipt.items && returnReceipt.items.length === 1
+                    ? (returnReceipt.items[0].pricePerUnit * returnReceipt.items[0].quantity).toFixed(2)
+                    : (returnReceipt.pricePerUnit * returnReceipt.quantity).toFixed(2)
+                  }
+                </span>
+              </div>
+            </div>
+
+            <button 
+              onClick={handleReturn} 
+              style={{ width: '100%', background: 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)', color: 'white', padding: '0.75rem', borderRadius: '0.5rem', fontWeight: '600', border: 'none', cursor: 'pointer' }}
+            >
+              Process Return
+            </button>
+          </>
+        )}
+      </div>
     </div>
   </div>
 )}
-
     </div>
   );
 }
