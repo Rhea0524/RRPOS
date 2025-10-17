@@ -21,7 +21,9 @@ emailjs.init("9NLEYJK7abrNW-HiS");
 
 export default function ClothingPOS() {
   const [products, setProducts] = useState([]);
-  const [selectedProduct, setSelectedProduct] = useState(null);
+const [selectedProduct, setSelectedProduct] = useState(null);
+const [cart, setCart] = useState([]);
+const [showCart, setShowCart] = useState(false);
 
   const [activeTab, setActiveTab] = useState('stock');
   const [salesHistory, setSalesHistory] = useState([]);
@@ -41,6 +43,7 @@ const [exchangeSize, setExchangeSize] = useState('');
 const [exchangeQuantity, setExchangeQuantity] = useState(1);const [returnQuantity, setReturnQuantity] = useState(1);
 const [showReturnModal, setShowReturnModal] = useState(false);
 const [returnReceipt, setReturnReceipt] = useState(null);
+const [selectedReturnItem, setSelectedReturnItem] = useState(null);
 
 
   useEffect(() => {
@@ -67,12 +70,100 @@ const [returnReceipt, setReturnReceipt] = useState(null);
     return () => unsubscribe();
   }, []);
 
- const openProductModal = (product) => {
+const openProductModal = (product) => {
   setSelectedProduct(product);
   setQuantityToSell(1);
   setSelectedSize('');
-  setCustomerEmail('');
   setShowProductModal(true);
+  // Remove customerEmail reset - we'll collect it at checkout
+};
+
+const addToCart = () => {
+  if (!selectedProduct || !selectedSize) {
+    alert('Please select a size');
+    return;
+  }
+
+  if (quantityToSell <= 0) {
+    alert('Invalid quantity');
+    return;
+  }
+
+  const currentSizeStock = selectedProduct.sizes[selectedSize];
+  if (quantityToSell > currentSizeStock) {
+    alert(`Not enough stock for size ${selectedSize}`);
+    return;
+  }
+
+  // Check if item already in cart
+  const existingItemIndex = cart.findIndex(
+    item => item.productId === selectedProduct.id && item.size === selectedSize
+  );
+
+  if (existingItemIndex !== -1) {
+    // Update existing item quantity
+    const updatedCart = [...cart];
+    updatedCart[existingItemIndex].quantity += quantityToSell;
+    setCart(updatedCart);
+  } else {
+    // Add new item to cart
+    const cartItem = {
+      productId: selectedProduct.id,
+      productName: selectedProduct.name || selectedProduct['name '] || '',
+      sku: selectedProduct.sku,
+      size: selectedSize,
+      quantity: quantityToSell,
+      pricePerUnit: selectedProduct.price,
+      imageUrl: selectedProduct.imageUrl
+    };
+    setCart([...cart, cartItem]);
+  }
+
+  // Close modal and reset
+  setShowProductModal(false);
+  setSelectedProduct(null);
+  setQuantityToSell(1);
+  setSelectedSize('');
+  
+  alert('✅ Item added to cart!');
+};
+
+const removeFromCart = (index) => {
+  const updatedCart = cart.filter((_, i) => i !== index);
+  setCart(updatedCart);
+};
+
+const updateCartItemQuantity = (index, newQuantity) => {
+  const updatedCart = [...cart];
+  const item = updatedCart[index];
+  
+  // Find the product to check stock
+  const product = products.find(p => p.id === item.productId);
+  if (!product || !product.sizes[item.size]) {
+    alert('Product not available');
+    return;
+  }
+  
+  const maxStock = product.sizes[item.size];
+  if (newQuantity > maxStock) {
+    alert(`Only ${maxStock} available in stock`);
+    return;
+  }
+  
+  if (newQuantity <= 0) {
+    removeFromCart(index);
+  } else {
+    updatedCart[index].quantity = newQuantity;
+    setCart(updatedCart);
+  }
+};
+
+const getCartTotal = () => {
+  return cart.reduce((total, item) => total + (item.pricePerUnit * item.quantity), 0);
+};
+
+const getCartItemCount = () => {
+  return cart.reduce((total, item) => total + item.quantity, 0);
 };
 
 
@@ -87,23 +178,50 @@ const [returnReceipt, setReturnReceipt] = useState(null);
 const openReturnModal = (receipt) => {
   setReturnReceipt(receipt);
   setReturnQuantity(1);
+   setSelectedReturnItem(null);  // ADD THIS LINE
   setShowReturnModal(true);
 };
 
 const handleReturn = async () => {
   if (!returnReceipt) return;
 
-  if (returnQuantity <= 0 || returnQuantity > returnReceipt.quantity) {
+  const isMultiItem = returnReceipt.items && returnReceipt.items.length > 1;
+  
+  let itemToReturn;
+  
+  if (isMultiItem) {
+    if (selectedReturnItem === null || selectedReturnItem === '') {
+      alert('Please select a product to return');
+      return;
+    }
+    itemToReturn = returnReceipt.items[selectedReturnItem];
+  } else if (returnReceipt.items && returnReceipt.items.length === 1) {
+    // Single item in items array
+    itemToReturn = returnReceipt.items[0];
+  } else {
+    // Old format - direct properties
+    itemToReturn = {
+      productId: returnReceipt.productId,
+      productName: returnReceipt.productName,
+      sku: returnReceipt.sku,
+      size: returnReceipt.size,
+      quantity: returnReceipt.quantity,
+      pricePerUnit: returnReceipt.pricePerUnit
+    };
+  }
+
+  // Validate return quantity
+  if (returnQuantity <= 0 || returnQuantity > itemToReturn.quantity) {
     alert('Invalid return quantity');
     return;
   }
 
-  if (!window.confirm(`Are you sure you want to return ${returnQuantity} unit(s) of ${returnReceipt.productName} (Size ${returnReceipt.size})?`)) {
+ if (!window.confirm(`Are you sure you want to return ${returnQuantity} unit(s) of ${itemToReturn.productName} (Size ${itemToReturn.size})?`)) {
     return;
   }
 
   try {
-    const product = products.find(p => p.id === returnReceipt.productId);
+    const product = products.find(p => p.id === itemToReturn.productId);
     
     if (!product) {
       alert('Product not found in inventory');
@@ -111,72 +229,89 @@ const handleReturn = async () => {
     }
 
     // Update the product stock
-    const productRef = doc(db, 'products', returnReceipt.productId);
+    // Update the product stock
+    const productRef = doc(db, 'products', itemToReturn.productId);
     const updatedSizes = { ...product.sizes };
-    updatedSizes[returnReceipt.size] = (updatedSizes[returnReceipt.size] || 0) + returnQuantity;
+    updatedSizes[itemToReturn.size] = (updatedSizes[itemToReturn.size] || 0) + returnQuantity;
 
     await updateDoc(productRef, {
       stock: product.stock + returnQuantity,
       sizes: updatedSizes
     });
 
-    // If returning all items, mark as fully returned
+    // Mark the sale record based on return type
    // Mark the sale record based on return type
-const saleRef = doc(db, 'sales', returnReceipt.id);
-if (returnQuantity === returnReceipt.quantity) {
-  // Full return - mark as returned
-  await updateDoc(saleRef, {
-    returned: true,
-    returnedAt: new Date().toISOString()
-  });
-} else {
-  // Partial return - update quantities and total
-  const newQuantity = returnReceipt.quantity - returnQuantity;
-  const newTotal = newQuantity * returnReceipt.pricePerUnit;
-  
-  await updateDoc(saleRef, {
-    quantity: newQuantity,
-    total: newTotal,
-    partialReturn: true,
-    returnedQuantity: (returnReceipt.returnedQuantity || 0) + returnQuantity,
-    lastReturnAt: new Date().toISOString()
-  });
-}
+    const saleRef = doc(db, 'sales', returnReceipt.id);
+    
+    if (isMultiItem) {
+      // Update the specific item in the items array
+      const updatedItems = [...returnReceipt.items];
+      
+      if (returnQuantity === itemToReturn.quantity) {
+        // Remove the item completely if fully returned
+        updatedItems.splice(selectedReturnItem, 1);
+      } else {
+        // Update the quantity if partially returned
+        updatedItems[selectedReturnItem] = {
+          ...itemToReturn,
+          quantity: itemToReturn.quantity - returnQuantity
+        };
+      }
+      
+      // Recalculate total
+      const newTotal = updatedItems.reduce((sum, item) => sum + (item.pricePerUnit * item.quantity), 0);
+      
+      if (updatedItems.length === 0) {
+        // All items returned - mark receipt as returned
+        await updateDoc(saleRef, {
+          returned: true,
+          returnedAt: new Date().toISOString(),
+          items: []
+        });
+      } else {
+        // Update with remaining items
+        await updateDoc(saleRef, {
+          items: updatedItems,
+          total: newTotal,
+          totalItems: updatedItems.reduce((sum, item) => sum + item.quantity, 0),
+          partialReturn: true,
+          lastReturnAt: new Date().toISOString()
+        });
+      }
+    } else {
+      // Old format - single item receipt
+      if (returnQuantity === itemToReturn.quantity) {
+        await updateDoc(saleRef, {
+          returned: true,
+          returnedAt: new Date().toISOString()
+        });
+      } else {
+        const newQuantity = itemToReturn.quantity - returnQuantity;
+        const newTotal = newQuantity * itemToReturn.pricePerUnit;
+        
+        await updateDoc(saleRef, {
+          quantity: newQuantity,
+          total: newTotal,
+          partialReturn: true,
+          returnedQuantity: (returnReceipt.returnedQuantity || 0) + returnQuantity,
+          lastReturnAt: new Date().toISOString()
+        });
+      }
+    }
 
-    setShowReturnModal(false);
-    alert(`✅ Return processed successfully!\n${returnQuantity} unit(s) of size ${returnReceipt.size} have been returned to stock.`);
+     setShowReturnModal(false);
+    setSelectedReturnItem(null);
+    setReturnQuantity(1);
+    alert(`✅ Return processed successfully!\n${returnQuantity} unit(s) of ${itemToReturn.productName} (Size ${itemToReturn.size}) have been returned to stock.`);
   } catch (error) {
     console.error('Error processing return:', error);
     alert('❌ Failed to process return. Please try again.');
   }
 };
 
-
-const completeSale = async () => {
-    // Check selectedProduct FIRST
-    if (!selectedProduct) {
-      alert('No product selected');
-      return;
-    }
-
-  // DEBUG: Log the selected product to see what data we have
-  console.log('Selected Product:', selectedProduct);
-  console.log('Product Name:', selectedProduct.name);
-  console.log('Product SKU:', selectedProduct.sku);
-  console.log('Product Price:', selectedProduct.price);
-
-  // Handle the field name with trailing space (from Firestore)
-  const productName = selectedProduct.name || selectedProduct['name '] || '';
-  
-  // Verify all required fields exist
-  if (!productName || !selectedProduct.sku || !selectedProduct.price) {
-    alert('Product data is incomplete. Please try selecting the product again.');
-    console.error('Missing product fields:', {
-      name: productName,
-      sku: selectedProduct.sku,
-      price: selectedProduct.price,
-      stock: selectedProduct.stock
-    });
+const completeCheckout = async () => {
+  if (cart.length === 0) {
+    alert('Your cart is empty');
     return;
   }
 
@@ -185,50 +320,50 @@ const completeSale = async () => {
     return;
   }
 
-  if (quantityToSell <= 0 || quantityToSell > selectedProduct.stock) {
-    alert('Invalid quantity');
-    return;
-  }
-
- try {
-    if (!selectedSize) {
-      alert('Please select a size');
-      return;
+  try {
+    // Verify stock for all items
+    for (const item of cart) {
+      const product = products.find(p => p.id === item.productId);
+      if (!product) {
+        alert(`Product ${item.productName} not found`);
+        return;
+      }
+      
+      const currentStock = product.sizes[item.size];
+      if (item.quantity > currentStock) {
+        alert(`Not enough stock for ${item.productName} (Size ${item.size}). Available: ${currentStock}`);
+        return;
+      }
     }
 
-    const productRef = doc(db, 'products', selectedProduct.id);
-    
-    // Check if size exists and has enough stock
-    if (!selectedProduct.sizes || !selectedProduct.sizes[selectedSize]) {
-      alert('Size not available');
-      return;
+    // Update stock for all items
+    for (const item of cart) {
+      const product = products.find(p => p.id === item.productId);
+      const productRef = doc(db, 'products', item.productId);
+      
+      const updatedSizes = { ...product.sizes };
+      updatedSizes[item.size] = product.sizes[item.size] - item.quantity;
+
+      await updateDoc(productRef, {
+        stock: product.stock - item.quantity,
+        sizes: updatedSizes
+      });
     }
-    
-    const currentSizeStock = selectedProduct.sizes[selectedSize];
-    if (quantityToSell > currentSizeStock) {
-      alert(`Not enough stock for size ${selectedSize}. Available: ${currentSizeStock}`);
-      return;
-    }
 
-    // Update both total stock and size-specific stock
-    const updatedSizes = { ...selectedProduct.sizes };
-    updatedSizes[selectedSize] = currentSizeStock - quantityToSell;
-
-    await updateDoc(productRef, {
-      stock: selectedProduct.stock - quantityToSell,
-      sizes: updatedSizes
-    });
-
-       const total = selectedProduct.price * quantityToSell;
-
+    // Create receipt with all items
+    const totalAmount = getCartTotal();
     const receipt = {
-      productId: selectedProduct.id,
-      productName: productName,
-      sku: selectedProduct.sku,
-      size: selectedSize,
-      quantity: quantityToSell,
-      pricePerUnit: selectedProduct.price,
-      total: total,
+      items: cart.map(item => ({
+        productId: item.productId,
+        productName: item.productName,
+        sku: item.sku,
+        size: item.size,
+        quantity: item.quantity,
+        pricePerUnit: item.pricePerUnit,
+        subtotal: item.pricePerUnit * item.quantity
+      })),
+      totalItems: getCartItemCount(),
+      total: totalAmount,
       customerEmail: customerEmail,
       timestamp: new Date().toISOString(),
       date: new Date().toLocaleString('en-ZA', { 
@@ -240,25 +375,28 @@ const completeSale = async () => {
       })
     };
 
-    console.log('Receipt object before saving:', receipt);
-
     const docRef = await addDoc(collection(db, 'sales'), receipt);
-    
     const receiptWithId = { ...receipt, id: docRef.id };
+    
     setLastReceipt(receiptWithId);
     
-    // Auto-send email to customer
+    // Auto-send email
     await emailReceipt(receiptWithId);
     
-    setShowProductModal(false);
+    // Clear cart and close modals
+    setCart([]);
+    setCustomerEmail('');
+    setShowCart(false);
     setShowSuccessModal(true);
-    setSelectedProduct(null);
 
   } catch (error) {
-    console.error('Error completing sale:', error);
-    alert('Error completing sale. Please try again.');
+    console.error('Error completing checkout:', error);
+    alert('Error completing checkout. Please try again.');
   }
 };
+
+   
+    
 
 
 
@@ -411,8 +549,15 @@ const downloadReceipt = (receipt) => {
   try {
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
+    
+    // Calculate height based on number of items
+    const isMultiItem = receipt.items && receipt.items.length > 0;
+    const itemCount = isMultiItem ? receipt.items.length : 1;
+    const baseHeight = 600;
+    const additionalHeight = isMultiItem ? (itemCount - 1) * 40 : 0;
+    
     canvas.width = 400;
-    canvas.height = 600;
+    canvas.height = baseHeight + additionalHeight;
 
     const renderReceipt = (logoImg) => {
       // Background
@@ -454,44 +599,69 @@ const downloadReceipt = (receipt) => {
       ctx.textAlign = 'left';
       ctx.font = 'bold 16px Arial';
       ctx.fillStyle = '#111827';
-      ctx.fillText('Product Details', 40, logoImg ? 250 : 160);
+      let yPos = logoImg ? 250 : 160;
+      ctx.fillText('Product Details', 40, yPos);
       
       ctx.font = '14px Arial';
       ctx.fillStyle = '#374151';
-      ctx.fillText(`Product: ${receipt.productName}`, 40, logoImg ? 280 : 190);
-      ctx.fillText(`SKU: ${receipt.sku} | Size: ${receipt.size}`, 40, logoImg ? 305 : 215);
-      ctx.fillText(`Quantity: ${receipt.quantity}`, 40, logoImg ? 330 : 240);
-      ctx.fillText(`Price per unit: R${receipt.pricePerUnit.toFixed(2)}`, 40, logoImg ? 355 : 265);
+      yPos += 30;
+      
+      // Handle both single item and multi-item receipts
+      if (isMultiItem) {
+        receipt.items.forEach((item, index) => {
+          ctx.fillText(`${item.quantity}x ${item.productName} (Size ${item.size})`, 40, yPos);
+          ctx.textAlign = 'right';
+          ctx.fillText(`R${item.subtotal.toFixed(2)}`, 360, yPos);
+          ctx.textAlign = 'left';
+          yPos += 25;
+        });
+      } else {
+        ctx.fillText(`Product: ${receipt.productName}`, 40, yPos);
+        yPos += 25;
+        ctx.fillText(`SKU: ${receipt.sku} | Size: ${receipt.size}`, 40, yPos);
+        yPos += 25;
+        ctx.fillText(`Quantity: ${receipt.quantity}`, 40, yPos);
+        yPos += 25;
+        ctx.fillText(`Price per unit: R${receipt.pricePerUnit.toFixed(2)}`, 40, yPos);
+        yPos += 25;
+      }
+      
+      yPos += 15;
       
       // Customer email
       ctx.font = 'bold 16px Arial';
       ctx.fillStyle = '#111827';
-      ctx.fillText('Customer', 40, logoImg ? 395 : 305);
+      ctx.fillText('Customer', 40, yPos);
+      yPos += 25;
       ctx.font = '14px Arial';
       ctx.fillStyle = '#374151';
-      ctx.fillText(receipt.customerEmail, 40, logoImg ? 420 : 330);
+      ctx.fillText(receipt.customerEmail, 40, yPos);
+      yPos += 30;
       
       // Divider
       ctx.beginPath();
-      ctx.moveTo(40, logoImg ? 445 : 355);
-      ctx.lineTo(360, logoImg ? 445 : 355);
+      ctx.moveTo(40, yPos);
+      ctx.lineTo(360, yPos);
       ctx.stroke();
+      yPos += 35;
       
       // Total
       ctx.font = 'bold 20px Arial';
       ctx.fillStyle = '#1e3a8a';
-      ctx.fillText('TOTAL:', 40, logoImg ? 480 : 390);
+      ctx.fillText('TOTAL:', 40, yPos);
       ctx.textAlign = 'right';
       ctx.font = 'bold 28px Arial';
       ctx.fillStyle = '#0ea5e9';
-      ctx.fillText(`R${receipt.total.toFixed(2)}`, 360, logoImg ? 480 : 390);
+      ctx.fillText(`R${receipt.total.toFixed(2)}`, 360, yPos);
+      yPos += 60;
       
       // Footer
       ctx.textAlign = 'center';
       ctx.font = '12px Arial';
       ctx.fillStyle = '#9ca3af';
-      ctx.fillText('Thank you for your business!', canvas.width / 2, logoImg ? 540 : 450);
-      ctx.fillText('www.randragencies.online', canvas.width / 2, logoImg ? 560 : 470);
+      ctx.fillText('Thank you for your business!', canvas.width / 2, yPos);
+      yPos += 20;
+      ctx.fillText('www.randragencies.online', canvas.width / 2, yPos);
       
       // Convert canvas to blob and download
       canvas.toBlob((blob) => {
@@ -521,23 +691,119 @@ const emailReceipt = async (receipt) => {
   try {
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
+    
+    // Calculate height based on number of items
+    const isMultiItem = receipt.items && receipt.items.length > 0;
+    const itemCount = isMultiItem ? receipt.items.length : 1;
+    const baseHeight = 600;
+    const additionalHeight = isMultiItem ? (itemCount - 1) * 40 : 0;
+    
     canvas.width = 400;
-    canvas.height = 600;
+    canvas.height = baseHeight + additionalHeight;
 
     const renderReceipt = (logoImg) => {
       // Clear canvas
       ctx.fillStyle = 'white';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       
-      // Add your receipt rendering logic here
-      ctx.fillStyle = 'black';
-      ctx.font = '20px Arial';
-      ctx.fillText('R&R AGENCIES', 150, 50);
+      // Logo
+      if (logoImg) {
+        const logoWidth = 120;
+        const logoHeight = (logoImg.height / logoImg.width) * logoWidth;
+        ctx.drawImage(logoImg, (canvas.width - logoWidth) / 2, 20, logoWidth, logoHeight);
+      }
+      
+      // Company name
+      ctx.fillStyle = '#1e3a8a';
+      ctx.font = 'bold 24px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText('R&R AGENCIES', canvas.width / 2, logoImg ? 140 : 50);
+      
+      // Receipt number
+      ctx.font = '16px Arial';
+      ctx.fillStyle = '#374151';
+      ctx.fillText(`Receipt #${receipt.id.slice(0, 8).toUpperCase()}`, canvas.width / 2, logoImg ? 170 : 80);
+      
+      // Date
       ctx.font = '14px Arial';
-      ctx.fillText(`Receipt #${receipt.id.slice(0, 8)}`, 20, 100);
-      ctx.fillText(`Product: ${receipt.productName}`, 20, 130);
-      ctx.fillText(`Quantity: ${receipt.quantity}`, 20, 160);
-      ctx.fillText(`Total: R${receipt.total.toFixed(2)}`, 20, 190);
+      ctx.fillStyle = '#6b7280';
+      ctx.fillText(receipt.date, canvas.width / 2, logoImg ? 195 : 105);
+      
+      // Divider
+      ctx.strokeStyle = '#e5e7eb';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(40, logoImg ? 220 : 130);
+      ctx.lineTo(360, logoImg ? 220 : 130);
+      ctx.stroke();
+      
+      // Product details
+      ctx.textAlign = 'left';
+      ctx.font = 'bold 16px Arial';
+      ctx.fillStyle = '#111827';
+      let yPos = logoImg ? 250 : 160;
+      ctx.fillText('Product Details', 40, yPos);
+      
+      ctx.font = '14px Arial';
+      ctx.fillStyle = '#374151';
+      yPos += 30;
+      
+      // Handle both single item and multi-item receipts
+      if (isMultiItem) {
+        receipt.items.forEach((item, index) => {
+          ctx.fillText(`${item.quantity}x ${item.productName} (Size ${item.size})`, 40, yPos);
+          ctx.textAlign = 'right';
+          ctx.fillText(`R${item.subtotal.toFixed(2)}`, 360, yPos);
+          ctx.textAlign = 'left';
+          yPos += 25;
+        });
+      } else {
+        ctx.fillText(`Product: ${receipt.productName}`, 40, yPos);
+        yPos += 25;
+        ctx.fillText(`SKU: ${receipt.sku} | Size: ${receipt.size}`, 40, yPos);
+        yPos += 25;
+        ctx.fillText(`Quantity: ${receipt.quantity}`, 40, yPos);
+        yPos += 25;
+        ctx.fillText(`Price per unit: R${receipt.pricePerUnit.toFixed(2)}`, 40, yPos);
+        yPos += 25;
+      }
+      
+      yPos += 15;
+      
+      // Customer email
+      ctx.font = 'bold 16px Arial';
+      ctx.fillStyle = '#111827';
+      ctx.fillText('Customer', 40, yPos);
+      yPos += 25;
+      ctx.font = '14px Arial';
+      ctx.fillStyle = '#374151';
+      ctx.fillText(receipt.customerEmail, 40, yPos);
+      yPos += 30;
+      
+      // Divider
+      ctx.beginPath();
+      ctx.moveTo(40, yPos);
+      ctx.lineTo(360, yPos);
+      ctx.stroke();
+      yPos += 35;
+      
+      // Total
+      ctx.font = 'bold 20px Arial';
+      ctx.fillStyle = '#1e3a8a';
+      ctx.fillText('TOTAL:', 40, yPos);
+      ctx.textAlign = 'right';
+      ctx.font = 'bold 28px Arial';
+      ctx.fillStyle = '#0ea5e9';
+      ctx.fillText(`R${receipt.total.toFixed(2)}`, 360, yPos);
+      yPos += 60;
+      
+      // Footer
+      ctx.textAlign = 'center';
+      ctx.font = '12px Arial';
+      ctx.fillStyle = '#9ca3af';
+      ctx.fillText('Thank you for your business!', canvas.width / 2, yPos);
+      yPos += 20;
+      ctx.fillText('www.randragencies.online', canvas.width / 2, yPos);
     };
 
     const renderReceiptAndSend = (logoImg = null) => {
@@ -552,15 +818,19 @@ const emailReceipt = async (receipt) => {
           const base64data = reader.result;
           
           try {
-           const templateParams = {
+          // Build items list for email
+const itemsList = receipt.items 
+  ? receipt.items.map(item => 
+      `${item.quantity}x ${item.productName} (Size ${item.size}) - R${item.subtotal.toFixed(2)}`
+    ).join('\n')
+  : `${receipt.quantity}x ${receipt.productName} (Size ${receipt.size}) - R${receipt.total.toFixed(2)}`;
+
+const templateParams = {
     to_email: receipt.customerEmail,
     receipt_number: receipt.id.slice(0, 8).toUpperCase(),
     customer_email: receipt.customerEmail,
-    product_name: receipt.productName,
-    sku: receipt.sku,
-    size: receipt.size,
-    quantity: receipt.quantity,
-    price_per_unit: `R${receipt.pricePerUnit.toFixed(2)}`,
+    items_list: itemsList,
+    total_items: receipt.totalItems || receipt.quantity,
     total_amount: `R${receipt.total.toFixed(2)}`,
     date: receipt.date,
     company_name: "R&R AGENCIES",
@@ -582,11 +852,6 @@ const emailReceipt = async (receipt) => {
           } catch (error) {
             console.error('Error sending email:', error);
             alert(`❌ Failed to send receipt. Error: ${error.text || error.message}`);
-          } finally {
-            // Reset button text
-            if (event?.target && originalText) {
-              event.target.textContent = originalText;
-            }
           }
         };
       }, 'image/png');
@@ -684,6 +949,30 @@ const emailReceipt = async (receipt) => {
                   cursor: 'pointer'
                 }}
               >
+
+                <button
+  onClick={() => setShowCart(true)}
+  style={{ 
+    display: 'flex', 
+    alignItems: 'center', 
+    padding: '0.5rem 1rem', 
+    borderRadius: '0.5rem',
+    background: 'transparent',
+    color: '#4b5563',
+    fontWeight: '600',
+    border: 'none',
+    cursor: 'pointer',
+    position: 'relative'
+  }}
+>
+  <ShoppingCart style={{ width: '20px', height: '20px', marginRight: '0.5rem' }} />
+  Cart
+  {cart.length > 0 && (
+    <span style={{ position: 'absolute', top: '0', right: '0', background: '#ef4444', color: 'white', borderRadius: '50%', width: '20px', height: '20px', fontSize: '0.75rem', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold' }}>
+      {getCartItemCount()}
+    </span>
+  )}
+</button>
                 <Receipt style={{ width: '20px', height: '20px', marginRight: '0.5rem' }} />
                 Sales
               </button>
@@ -720,7 +1009,7 @@ const emailReceipt = async (receipt) => {
                         <tr key={product.id} style={{ background: 'white', borderBottom: '1px solid #f3f4f6' }} onMouseEnter={(e) => { e.currentTarget.style.background = 'linear-gradient(90deg, #ffffff 0%, #eff6ff 100%)'; }} onMouseLeave={(e) => { e.currentTarget.style.background = 'white'; }}>
                           <td style={{ padding: '1.25rem 1rem' }}>{product.imageUrl ? <img src={product.imageUrl} alt={product.name} style={{ width: '64px', height: '64px', objectFit: 'cover', borderRadius: '0.75rem', border: '2px solid #dbeafe' }} /> : <div style={{ width: '64px', height: '64px', background: '#dbeafe', borderRadius: '0.75rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Package style={{ width: '32px', height: '32px', color: '#93c5fd' }} /></div>}</td>
                           <td style={{ padding: '1.25rem 1rem', fontWeight: '600', color: '#111827' }}>{product.name}</td>
-                          <td style={{ padding: '1.25rem 1rem', fontSize: '0.875rem', color: '#6b7280' }}>{product.sku}</td>
+                          <td style={{ padding: '1.25rem 1rem', fontSize: '0.875rem', color: '#111827' }}>{product.sku}</td>
                           <td style={{ padding: '1.25rem 1rem', fontSize: '1.125rem', fontWeight: '800', color: '#2563eb' }}>R{product.price}</td>
                           <td style={{ padding: '1.25rem 1rem' }}><span style={{ padding: '0.5rem 1rem', borderRadius: '9999px', fontSize: '0.875rem', fontWeight: '700', background: product.stock === 0 ? '#fee2e2' : product.stock < 5 ? '#fef3c7' : '#e0f2fe', color: product.stock === 0 ? '#991b1b' : product.stock < 5 ? '#92400e' : '#0369a1', display: 'inline-block' }}>{product.stock}</span></td>
                           <td style={{ padding: '1.25rem 1rem' }}><button onClick={() => openProductModal(product)} style={{ background: 'linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%)', color: 'white', padding: '0.5rem 1rem', borderRadius: '0.5rem', fontWeight: '600', border: 'none', cursor: 'pointer' }}>View</button></td>
@@ -800,7 +1089,77 @@ const emailReceipt = async (receipt) => {
           </div>
         )}
       </div>
+{showCart && (
+  <div style={{ position: 'fixed', inset: '0', background: 'rgba(30, 64, 175, 0.4)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem', zIndex: '50' }}>
+    <div style={{ background: 'white', borderRadius: '1rem', maxWidth: '48rem', width: '100%', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 25px 50px -12px rgba(37, 99, 235, 0.25)', border: '2px solid #dbeafe' }}>
+      <div style={{ position: 'sticky', top: '0', background: 'white', borderBottom: '1px solid #e5e7eb', padding: '1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', zIndex: '10' }}>
+        <h3 style={{ fontSize: '1.25rem', fontWeight: '600' }}>Shopping Cart ({getCartItemCount()} items)</h3>
+        <button onClick={() => setShowCart(false)} style={{ color: '#9ca3af', background: 'none', border: 'none', cursor: 'pointer' }}>
+          <X style={{ width: '24px', height: '24px' }} />
+        </button>
+      </div>
 
+      <div style={{ padding: '1.5rem' }}>
+        {cart.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '3rem 0', color: '#9ca3af' }}>
+            <ShoppingCart style={{ width: '64px', height: '64px', margin: '0 auto 0.75rem', opacity: '0.5' }} />
+            <p>Your cart is empty</p>
+          </div>
+        ) : (
+          <>
+            <div style={{ marginBottom: '1.5rem' }}>
+              {cart.map((item, index) => (
+                <div key={index} style={{ display: 'flex', gap: '1rem', padding: '1rem', background: '#f9fafb', borderRadius: '0.5rem', marginBottom: '1rem', alignItems: 'center' }}>
+                  {item.imageUrl ? (
+                    <img src={item.imageUrl} alt={item.productName} style={{ width: '64px', height: '64px', objectFit: 'cover', borderRadius: '0.5rem' }} />
+                  ) : (
+                    <div style={{ width: '64px', height: '64px', background: '#dbeafe', borderRadius: '0.5rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <Package style={{ width: '32px', height: '32px', color: '#93c5fd' }} />
+                    </div>
+                  )}
+                  
+                  <div style={{ flex: '1' }}>
+                    <div style={{ fontWeight: '600', marginBottom: '0.25rem' }}>{item.productName}</div>
+                    <div style={{ fontSize: '0.875rem', color: '#6b7280' }}>Size: {item.size} | SKU: {item.sku}</div>
+                    <div style={{ fontSize: '0.875rem', color: '#2563eb', fontWeight: '600' }}>R{item.pricePerUnit.toFixed(2)} each</div>
+                  </div>
+
+                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+  <span style={{ minWidth: '40px', textAlign: 'center', fontWeight: '600', fontSize: '1.125rem', color: '#111827' }}>Qty: {item.quantity}</span>
+</div>
+
+                  <div style={{ fontWeight: '700', color: '#111827', minWidth: '80px', textAlign: 'right' }}>
+                    R{(item.pricePerUnit * item.quantity).toFixed(2)}
+                  </div>
+
+                  <button onClick={() => removeFromCart(index)} style={{ color: '#ef4444', background: 'none', border: 'none', cursor: 'pointer' }}>
+                    <X style={{ width: '20px', height: '20px' }} />
+                  </button>
+                </div>
+              ))}
+            </div>
+
+            <div style={{ borderTop: '2px solid #e5e7eb', paddingTop: '1rem', marginBottom: '1rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '1.5rem', fontWeight: '700', color: '#111827' }}>
+                <span>Total:</span>
+                <span style={{ color: '#2563eb' }}>R{getCartTotal().toFixed(2)}</span>
+              </div>
+            </div>
+
+            <div style={{ marginBottom: '1rem' }}>
+              <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '600', color: '#1e3a8a', marginBottom: '0.5rem' }}>Customer Email</label>
+              <input type="email" value={customerEmail} onChange={(e) => setCustomerEmail(e.target.value)} placeholder="customer@example.com" style={{ width: '100%', padding: '0.75rem 1rem', border: '2px solid #e5e7eb', borderRadius: '0.5rem', fontSize: '1rem', color: '#000', background: 'white' }} />
+            </div>
+
+            <button onClick={completeCheckout} disabled={!customerEmail || !customerEmail.includes('@')} style={{ width: '100%', background: (!customerEmail || !customerEmail.includes('@')) ? '#d1d5db' : 'linear-gradient(135deg, #10b981 0%, #059669 100%)', color: 'white', padding: '1rem', borderRadius: '0.5rem', fontWeight: '600', border: 'none', cursor: (!customerEmail || !customerEmail.includes('@')) ? 'not-allowed' : 'pointer', fontSize: '1.125rem' }}>
+              Complete Checkout
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  </div>
+)}
       {showProductModal && selectedProduct && (
         <div style={{ position: 'fixed', inset: '0', background: 'rgba(30, 64, 175, 0.4)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem', zIndex: '50' }}>
           <div style={{ background: 'white', borderRadius: '1rem', maxWidth: '48rem', width: '100%', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 25px 50px -12px rgba(37, 99, 235, 0.25)', border: '2px solid #dbeafe' }}>
@@ -858,10 +1217,7 @@ const emailReceipt = async (receipt) => {
                     <input type="number" min="1" max={selectedSize && selectedProduct.sizes ? selectedProduct.sizes[selectedSize] : 0} value={quantityToSell} onChange={(e) => setQuantityToSell(Math.min(Math.max(1, parseInt(e.target.value) || 1), selectedSize && selectedProduct.sizes ? selectedProduct.sizes[selectedSize] : 0))} disabled={!selectedSize || selectedProduct.stock === 0} style={{ width: '100%', padding: '0.5rem 1rem', border: '2px solid #e5e7eb', borderRadius: '0.5rem', fontSize: '1rem', color: '#000', background: 'white' }} />
                     </div>
 
-                    <div style={{ marginBottom: '1rem' }}>
-                      <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '600', color: '#1e3a8a', marginBottom: '0.5rem' }}>Customer Email</label>
-                     <input type="email" value={customerEmail} onChange={(e) => setCustomerEmail(e.target.value)} placeholder="customer@example.com" disabled={selectedProduct.stock === 0} style={{ width: '100%', padding: '0.5rem 1rem', border: '2px solid #e5e7eb', borderRadius: '0.5rem', fontSize: '1rem', color: '#000', background: 'white' }} />
-                    </div>
+            
 
                     <div style={{ marginBottom: '1rem', padding: '1rem', background: '#eff6ff', border: '2px solid #bfdbfe', borderRadius: '0.5rem' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between' }}>
@@ -870,9 +1226,9 @@ const emailReceipt = async (receipt) => {
                       </div>
                     </div>
                     
-                    <button onClick={completeSale} disabled={!customerEmail || !customerEmail.includes('@') || selectedProduct.stock === 0} style={{ width: '100%', background: (!customerEmail || !customerEmail.includes('@') || selectedProduct.stock === 0) ? '#d1d5db' : 'linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%)', color: 'white', padding: '0.75rem', borderRadius: '0.5rem', fontWeight: '600', border: 'none', cursor: (!customerEmail || !customerEmail.includes('@') || selectedProduct.stock === 0) ? 'not-allowed' : 'pointer', fontSize: '1rem' }}>
-                      {selectedProduct.stock === 0 ? 'Out of Stock' : 'Complete Sale'}
-                    </button>
+                    <button onClick={addToCart} disabled={!selectedSize || selectedProduct.stock === 0} style={{ width: '100%', background: (!selectedSize || selectedProduct.stock === 0) ? '#d1d5db' : 'linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%)', color: 'white', padding: '0.75rem', borderRadius: '0.5rem', fontWeight: '600', border: 'none', cursor: (!selectedSize || selectedProduct.stock === 0) ? 'not-allowed' : 'pointer', fontSize: '1rem' }}>
+  {selectedProduct.stock === 0 ? 'Out of Stock' : 'Add to Cart'}
+</button>
                   </div>
                 </div>
               </div>
@@ -881,9 +1237,9 @@ const emailReceipt = async (receipt) => {
         </div>
       )}
 
-      {showSuccessModal && lastReceipt && (
+{showSuccessModal && lastReceipt && (
         <div style={{ position: 'fixed', inset: '0', background: 'rgba(30, 64, 175, 0.4)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem', zIndex: '50' }}>
-          <div style={{ background: 'white', borderRadius: '1rem', maxWidth: '28rem', width: '100%', padding: '1.5rem', boxShadow: '0 25px 50px -12px rgba(37, 99, 235, 0.25)', border: '2px solid #dbeafe' }}>
+          <div style={{ background: 'white', borderRadius: '1rem', maxWidth: '32rem', width: '100%', maxHeight: '90vh', overflowY: 'auto', padding: '1.5rem', boxShadow: '0 25px 50px -12px rgba(37, 99, 235, 0.25)', border: '2px solid #dbeafe' }}>
             <div style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
               <div style={{ width: '64px', height: '64px', background: '#e0f2fe', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1rem' }}>
                 <svg style={{ width: '32px', height: '32px', color: '#0369a1' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -891,26 +1247,26 @@ const emailReceipt = async (receipt) => {
                 </svg>
               </div>
               <h2 style={{ fontSize: '1.5rem', fontWeight: '700', color: '#111827', marginBottom: '0.5rem' }}>Sale Complete!</h2>
-              <p style={{ color: '#6b7280' }}>Receipt sent to {lastReceipt.customerEmail}</p>
+             <p style={{ color: '#111827' }}>Receipt sent to {lastReceipt.customerEmail}</p>
             </div>
 
             <div style={{ borderTop: '1px dashed #e5e7eb', borderBottom: '1px dashed #e5e7eb', paddingTop: '1rem', paddingBottom: '1rem', marginBottom: '1rem' }}>
-              <div style={{ fontSize: '0.875rem', color: '#6b7280', marginBottom: '0.25rem' }}>Receipt #{lastReceipt.id.slice(0, 8)}</div>
+              <div style={{ fontSize: '0.875rem', color: '#111827', marginBottom: '0.25rem' }}>Receipt #{lastReceipt.id.slice(0, 8)}</div>
               <div style={{ fontSize: '1.875rem', fontWeight: '700', color: '#0ea5e9', marginBottom: '0.75rem' }}>R{lastReceipt.total.toFixed(2)}</div>
               
-              <div style={{ textAlign: 'left', fontSize: '0.875rem', background: '#eff6ff', padding: '0.75rem', borderRadius: '0.5rem' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span>{lastReceipt.quantity}x {lastReceipt.productName}</span>
-                  <span>R{lastReceipt.total.toFixed(2)}</span>
-                </div>
+              <div style={{ textAlign: 'left', fontSize: '0.875rem', maxHeight: '200px', overflowY: 'auto' }}>
+                {lastReceipt.items && lastReceipt.items.map((item, index) => (
+                  <div key={index} style={{ background: '#eff6ff', padding: '0.75rem', borderRadius: '0.5rem', marginBottom: '0.5rem' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', color: '#111827' }}>
+                      <span>{item.quantity}x {item.productName} (Size {item.size})</span>
+                      <span>R{item.subtotal.toFixed(2)}</span>
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-              <button onClick={() => downloadReceipt(lastReceipt)} style={{ width: '100%', background: 'linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%)', color: 'white', padding: '0.5rem', borderRadius: '0.5rem', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: '600' }}>
-                <Download style={{ width: '16px', height: '16px', marginRight: '0.5rem' }} />
-                Download Receipt
-              </button>
               <button onClick={() => setShowSuccessModal(false)} style={{ width: '100%', border: '2px solid #e5e7eb', color: '#374151', padding: '0.5rem', borderRadius: '0.5rem', background: 'white', cursor: 'pointer', fontWeight: '600' }}>
                 Close
               </button>
@@ -989,50 +1345,92 @@ const emailReceipt = async (receipt) => {
     <div style={{ background: 'white', borderRadius: '1rem', maxWidth: '28rem', width: '100%', padding: '1.5rem', boxShadow: '0 25px 50px -12px rgba(239, 68, 68, 0.25)', border: '2px solid #fecaca' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
         <h3 style={{ fontSize: '1.25rem', fontWeight: '600', color: '#dc2626' }}>Process Return</h3>
-        <button onClick={() => setShowReturnModal(false)} style={{ color: '#9ca3af', background: 'none', border: 'none', cursor: 'pointer' }}>
+        <button onClick={() => { setShowReturnModal(false); setSelectedReturnItem(null); }} style={{ color: '#9ca3af', background: 'none', border: 'none', cursor: 'pointer' }}>
           <X style={{ width: '24px', height: '24px' }} />
         </button>
       </div>
 
-      <div style={{ background: '#fef2f2', padding: '1rem', borderRadius: '0.5rem', marginBottom: '1.5rem' }}>
-        <h4 style={{ fontWeight: '600', color: '#dc2626', marginBottom: '0.5rem' }}>Original Purchase</h4>
-        <div style={{ fontSize: '0.875rem', color: '#1f2937' }}>
-          <div>{returnReceipt.productName} - Size {returnReceipt.size}</div>
-          <div>Quantity purchased: {returnReceipt.quantity}</div>
-          <div>Price per unit: R{returnReceipt.pricePerUnit.toFixed(2)}</div>
+      {returnReceipt.items && returnReceipt.items.length > 1 && (
+        <div style={{ marginBottom: '1.5rem' }}>
+          <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '600', color: '#dc2626', marginBottom: '0.5rem' }}>
+            Select Product to Return
+          </label>
+          <select 
+            value={selectedReturnItem !== null ? selectedReturnItem : ''} 
+            onChange={(e) => { setSelectedReturnItem(e.target.value === '' ? null : parseInt(e.target.value)); setReturnQuantity(1); }} 
+            style={{ width: '100%', padding: '0.75rem', border: '2px solid #fecaca', borderRadius: '0.5rem', fontSize: '1rem', color: '#000', background: 'white' }}
+          >
+            <option value="">-- Select a product --</option>
+            {returnReceipt.items.map((item, index) => (
+              <option key={index} value={index}>
+                {item.productName} - Size {item.size} ({item.quantity}x R{item.pricePerUnit.toFixed(2)})
+              </option>
+            ))}
+          </select>
         </div>
-      </div>
+      )}
 
-      <div style={{ marginBottom: '1.5rem' }}>
-        <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '600', color: '#dc2626', marginBottom: '0.5rem' }}>
-          Quantity to Return
-        </label>
-        <input 
-          type="number" 
-          min="1" 
-          max={returnReceipt.quantity} 
-          value={returnQuantity} 
-          onChange={(e) => setReturnQuantity(Math.min(Math.max(1, parseInt(e.target.value) || 1), returnReceipt.quantity))} 
-          style={{ width: '100%', padding: '0.75rem', border: '2px solid #fecaca', borderRadius: '0.5rem', fontSize: '1rem', color: '#000', background: 'white' }} 
-        />
-      </div>
+      {((returnReceipt.items && returnReceipt.items.length > 1 && selectedReturnItem !== null) || 
+        (returnReceipt.items && returnReceipt.items.length === 1) || 
+        !returnReceipt.items) && (
+        <>
+          <div style={{ background: '#fef2f2', padding: '1rem', borderRadius: '0.5rem', marginBottom: '1.5rem' }}>
+            <h4 style={{ fontWeight: '600', color: '#dc2626', marginBottom: '0.5rem' }}>Original Purchase</h4>
+            <div style={{ fontSize: '0.875rem', color: '#1f2937' }}>
+              {returnReceipt.items ? (
+                <>
+                  <div>{returnReceipt.items[selectedReturnItem || 0].productName} - Size {returnReceipt.items[selectedReturnItem || 0].size}</div>
+                  <div>Quantity purchased: {returnReceipt.items[selectedReturnItem || 0].quantity}</div>
+                  <div>Price per unit: R{returnReceipt.items[selectedReturnItem || 0].pricePerUnit.toFixed(2)}</div>
+                </>
+              ) : (
+                <>
+                  <div>{returnReceipt.productName} - Size {returnReceipt.size}</div>
+                  <div>Quantity purchased: {returnReceipt.quantity}</div>
+                  <div>Price per unit: R{returnReceipt.pricePerUnit.toFixed(2)}</div>
+                </>
+              )}
+            </div>
+          </div>
 
-      <div style={{ background: '#fef2f2', padding: '1rem', borderRadius: '0.5rem', marginBottom: '1.5rem', border: '2px solid #fecaca' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-          <span style={{ fontWeight: '600', color: '#dc2626' }}>Refund Amount:</span>
-          <span style={{ fontSize: '1.5rem', fontWeight: '700', color: '#dc2626' }}>R{(returnReceipt.pricePerUnit * returnQuantity).toFixed(2)}</span>
-        </div>
-      </div>
+          <div style={{ marginBottom: '1.5rem' }}>
+            <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '600', color: '#dc2626', marginBottom: '0.5rem' }}>
+              Quantity to Return
+            </label>
+            <input 
+              type="number" 
+              min="1" 
+              max={returnReceipt.items ? returnReceipt.items[selectedReturnItem || 0].quantity : returnReceipt.quantity}
+              value={returnQuantity} 
+              onChange={(e) => {
+                const maxQty = returnReceipt.items ? returnReceipt.items[selectedReturnItem || 0].quantity : returnReceipt.quantity;
+                setReturnQuantity(Math.min(Math.max(1, parseInt(e.target.value) || 1), maxQty));
+              }} 
+              style={{ width: '100%', padding: '0.75rem', border: '2px solid #fecaca', borderRadius: '0.5rem', fontSize: '1rem', color: '#000', background: 'white' }} 
+            />
+          </div>
 
-      <button 
-        onClick={handleReturn} 
-        style={{ width: '100%', background: 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)', color: 'white', padding: '0.75rem', borderRadius: '0.5rem', fontWeight: '600', border: 'none', cursor: 'pointer' }}
-      >
-        Process Return
-      </button>
+          <div style={{ background: '#fef2f2', padding: '1rem', borderRadius: '0.5rem', marginBottom: '1.5rem', border: '2px solid #fecaca' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span style={{ fontWeight: '600', color: '#dc2626' }}>Refund Amount:</span>
+              <span style={{ fontSize: '1.5rem', fontWeight: '700', color: '#dc2626' }}>
+                R{((returnReceipt.items ? returnReceipt.items[selectedReturnItem || 0].pricePerUnit : returnReceipt.pricePerUnit) * returnQuantity).toFixed(2)}
+              </span>
+            </div>
+          </div>
+
+          <button 
+            onClick={handleReturn} 
+            style={{ width: '100%', background: 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)', color: 'white', padding: '0.75rem', borderRadius: '0.5rem', fontWeight: '600', border: 'none', cursor: 'pointer' }}
+          >
+            Process Return
+          </button>
+        </>
+      )}
     </div>
   </div>
 )}
+
     </div>
   );
 }
