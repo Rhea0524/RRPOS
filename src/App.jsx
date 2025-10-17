@@ -176,6 +176,7 @@ const getCartItemCount = () => {
 };
 
 const openReturnModal = (receipt) => {
+  console.log('🔍 Return Receipt Data:', receipt);
   setReturnReceipt(receipt);
   setReturnQuantity(1);
   setSelectedReturnItems([]); // Change to empty array
@@ -582,14 +583,16 @@ const downloadReceipt = (receipt) => {
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
     
-    // Calculate height based on number of items
+    // Calculate height based on receipt type and items
+    const isExchange = receipt.type === 'exchange';
     const isMultiItem = receipt.items && receipt.items.length > 0;
     const itemCount = isMultiItem ? receipt.items.length : 1;
-    const baseHeight = 600;
+    const baseHeight = isExchange ? 700 : 600;
     const additionalHeight = isMultiItem ? (itemCount - 1) * 40 : 0;
+    const exchangeHeight = isExchange ? 120 : 0;
     
     canvas.width = 400;
-    canvas.height = baseHeight + additionalHeight;
+    canvas.height = baseHeight + additionalHeight + exchangeHeight;
 
     const renderReceipt = (logoImg) => {
       // Background
@@ -632,30 +635,82 @@ const downloadReceipt = (receipt) => {
       ctx.font = 'bold 16px Arial';
       ctx.fillStyle = '#111827';
       let yPos = logoImg ? 250 : 160;
-      ctx.fillText('Product Details', 40, yPos);
       
-      ctx.font = '14px Arial';
-      ctx.fillStyle = '#374151';
-      yPos += 30;
-      
-      // Handle both single item and multi-item receipts
-      if (isMultiItem) {
-        receipt.items.forEach((item, index) => {
-          ctx.fillText(`${item.quantity}x ${item.productName} (Size ${item.size})`, 40, yPos);
+      // Handle exchange receipts differently
+      if (isExchange) {
+        ctx.fillText('EXCHANGE RECEIPT', 40, yPos);
+        yPos += 30;
+        
+        // Original items
+        ctx.font = 'bold 14px Arial';
+        ctx.fillStyle = '#dc2626';
+        ctx.fillText('Original Items Returned:', 40, yPos);
+        yPos += 25;
+        ctx.font = '12px Arial';
+        ctx.fillStyle = '#374151';
+        
+        (receipt.originalProducts || []).forEach(item => {
+          ctx.fillText(`${item.quantity}x ${item.name} (Size ${item.size})`, 50, yPos);
           ctx.textAlign = 'right';
-          ctx.fillText(`R${item.subtotal.toFixed(2)}`, 360, yPos);
+          ctx.fillText(`R${(item.price * item.quantity).toFixed(2)}`, 360, yPos);
           ctx.textAlign = 'left';
-          yPos += 25;
+          yPos += 20;
         });
+        
+        yPos += 10;
+        
+        // New item
+        ctx.font = 'bold 14px Arial';
+        ctx.fillStyle = '#10b981';
+        ctx.fillText('New Item Received:', 40, yPos);
+        yPos += 25;
+        ctx.font = '12px Arial';
+        ctx.fillStyle = '#374151';
+        
+        const newProd = receipt.newProduct;
+        ctx.fillText(`${newProd.quantity}x ${newProd.name} (Size ${newProd.size})`, 50, yPos);
+        ctx.textAlign = 'right';
+        ctx.fillText(`R${(newProd.price * newProd.quantity).toFixed(2)}`, 360, yPos);
+        ctx.textAlign = 'left';
+        yPos += 25;
+        
+        // Price difference
+        yPos += 10;
+        ctx.font = 'bold 14px Arial';
+        const priceDiff = receipt.priceDifference || 0;
+        ctx.fillStyle = priceDiff >= 0 ? '#10b981' : '#dc2626';
+        ctx.fillText(priceDiff >= 0 ? 'Amount to Collect:' : 'Refund Amount:', 40, yPos);
+        ctx.textAlign = 'right';
+        ctx.fillText(`R${Math.abs(priceDiff).toFixed(2)}`, 360, yPos);
+        ctx.textAlign = 'left';
+        yPos += 25;
       } else {
-        ctx.fillText(`Product: ${receipt.productName}`, 40, yPos);
-        yPos += 25;
-        ctx.fillText(`SKU: ${receipt.sku} | Size: ${receipt.size}`, 40, yPos);
-        yPos += 25;
-        ctx.fillText(`Quantity: ${receipt.quantity}`, 40, yPos);
-        yPos += 25;
-        ctx.fillText(`Price per unit: R${receipt.pricePerUnit.toFixed(2)}`, 40, yPos);
-        yPos += 25;
+        // Regular receipt
+        ctx.fillText('Product Details', 40, yPos);
+        
+        ctx.font = '14px Arial';
+        ctx.fillStyle = '#374151';
+        yPos += 30;
+        
+        // Handle both single item and multi-item receipts
+        if (isMultiItem) {
+          receipt.items.forEach((item, index) => {
+            ctx.fillText(`${item.quantity}x ${item.productName} (Size ${item.size})`, 40, yPos);
+            ctx.textAlign = 'right';
+            ctx.fillText(`R${item.subtotal.toFixed(2)}`, 360, yPos);
+            ctx.textAlign = 'left';
+            yPos += 25;
+          });
+        } else {
+          ctx.fillText(`Product: ${receipt.productName}`, 40, yPos);
+          yPos += 25;
+          ctx.fillText(`SKU: ${receipt.sku} | Size: ${receipt.size}`, 40, yPos);
+          yPos += 25;
+          ctx.fillText(`Quantity: ${receipt.quantity}`, 40, yPos);
+          yPos += 25;
+          ctx.fillText(`Price per unit: R${(receipt.pricePerUnit || 0).toFixed(2)}`, 40, yPos);
+          yPos += 25;
+        }
       }
       
       yPos += 15;
@@ -724,14 +779,16 @@ const emailReceipt = async (receipt) => {
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
     
-    // Calculate height based on number of items
+    // Calculate height based on receipt type and items
+    const isExchange = receipt.type === 'exchange';
     const isMultiItem = receipt.items && receipt.items.length > 0;
     const itemCount = isMultiItem ? receipt.items.length : 1;
-    const baseHeight = 600;
+    const baseHeight = isExchange ? 700 : 600;
     const additionalHeight = isMultiItem ? (itemCount - 1) * 40 : 0;
+    const exchangeHeight = isExchange ? 120 : 0;
     
     canvas.width = 400;
-    canvas.height = baseHeight + additionalHeight;
+    canvas.height = baseHeight + additionalHeight + exchangeHeight;
 
     const renderReceipt = (logoImg) => {
       // Clear canvas
@@ -774,31 +831,85 @@ const emailReceipt = async (receipt) => {
       ctx.font = 'bold 16px Arial';
       ctx.fillStyle = '#111827';
       let yPos = logoImg ? 250 : 160;
-      ctx.fillText('Product Details', 40, yPos);
       
-      ctx.font = '14px Arial';
-      ctx.fillStyle = '#374151';
-      yPos += 30;
-      
-      // Handle both single item and multi-item receipts
-      if (isMultiItem) {
-        receipt.items.forEach((item, index) => {
-          ctx.fillText(`${item.quantity}x ${item.productName} (Size ${item.size})`, 40, yPos);
+      // Handle exchange receipts differently
+      if (isExchange) {
+        ctx.fillText('EXCHANGE RECEIPT', 40, yPos);
+        yPos += 30;
+        
+        // Original items
+        ctx.font = 'bold 14px Arial';
+        ctx.fillStyle = '#dc2626';
+        ctx.fillText('Original Items Returned:', 40, yPos);
+        yPos += 25;
+        ctx.font = '12px Arial';
+        ctx.fillStyle = '#374151';
+        
+        (receipt.originalProducts || []).forEach(item => {
+          ctx.fillText(`${item.quantity}x ${item.name} (Size ${item.size})`, 50, yPos);
           ctx.textAlign = 'right';
-          ctx.fillText(`R${item.subtotal.toFixed(2)}`, 360, yPos);
+          ctx.fillText(`R${(item.price * item.quantity).toFixed(2)}`, 360, yPos);
           ctx.textAlign = 'left';
-          yPos += 25;
+          yPos += 20;
         });
+        
+        yPos += 10;
+        
+        // New item
+        ctx.font = 'bold 14px Arial';
+        ctx.fillStyle = '#10b981';
+        ctx.fillText('New Item Received:', 40, yPos);
+        yPos += 25;
+        ctx.font = '12px Arial';
+        ctx.fillStyle = '#374151';
+        
+        const newProd = receipt.newProduct;
+        ctx.fillText(`${newProd.quantity}x ${newProd.name} (Size ${newProd.size})`, 50, yPos);
+        ctx.textAlign = 'right';
+        ctx.fillText(`R${(newProd.price * newProd.quantity).toFixed(2)}`, 360, yPos);
+        ctx.textAlign = 'left';
+        yPos += 25;
+        
+        // Price difference
+        yPos += 10;
+        ctx.font = 'bold 14px Arial';
+        const priceDiff = receipt.priceDifference || 0;
+        ctx.fillStyle = priceDiff >= 0 ? '#10b981' : '#dc2626';
+        ctx.fillText(priceDiff >= 0 ? 'Amount to Collect:' : 'Refund Amount:', 40, yPos);
+        ctx.textAlign = 'right';
+        ctx.fillText(`R${Math.abs(priceDiff).toFixed(2)}`, 360, yPos);
+        ctx.textAlign = 'left';
+        yPos += 25;
       } else {
-        ctx.fillText(`Product: ${receipt.productName}`, 40, yPos);
-        yPos += 25;
-        ctx.fillText(`SKU: ${receipt.sku} | Size: ${receipt.size}`, 40, yPos);
-        yPos += 25;
-        ctx.fillText(`Quantity: ${receipt.quantity}`, 40, yPos);
-        yPos += 25;
-        ctx.fillText(`Price per unit: R${receipt.pricePerUnit.toFixed(2)}`, 40, yPos);
-        yPos += 25;
+        // Regular receipt
+        ctx.fillText('Product Details', 40, yPos);
+        
+        ctx.font = '14px Arial';
+        ctx.fillStyle = '#374151';
+        yPos += 30;
+        
+        // Handle both single item and multi-item receipts
+        if (isMultiItem) {
+          receipt.items.forEach((item, index) => {
+            ctx.fillText(`${item.quantity}x ${item.productName} (Size ${item.size})`, 40, yPos);
+            ctx.textAlign = 'right';
+            ctx.fillText(`R${item.subtotal.toFixed(2)}`, 360, yPos);
+            ctx.textAlign = 'left';
+            yPos += 25;
+          });
+       } else {
+  ctx.fillText(`Product: ${receipt.productName}`, 40, yPos);
+  yPos += 25;
+  ctx.fillText(`SKU: ${receipt.sku} | Size: ${receipt.size}`, 40, yPos);
+  yPos += 25;
+  ctx.fillText(`Quantity: ${receipt.quantity}`, 40, yPos);
+  yPos += 25;
+  ctx.fillText(`Price per unit: R${(receipt.pricePerUnit || 0).toFixed(2)}`, 40, yPos);
+  yPos += 25;
+}
       }
+      
+      
       
       yPos += 15;
       
@@ -851,11 +962,31 @@ const emailReceipt = async (receipt) => {
           
           try {
           // Build items list for email
-const itemsList = receipt.items 
-  ? receipt.items.map(item => 
-      `${item.quantity}x ${item.productName} (Size ${item.size}) - R${item.subtotal.toFixed(2)}`
-    ).join('\n')
-  : `${receipt.quantity}x ${receipt.productName} (Size ${receipt.size}) - R${receipt.total.toFixed(2)}`;
+// Build items list for email
+// Build items list for email
+let itemsList = '';
+
+if (receipt.type === 'exchange') {
+  // Exchange receipt format
+  itemsList = 'EXCHANGE RECEIPT\n\n';
+  itemsList += 'Original Items Returned:\n';
+  (receipt.originalProducts || []).forEach(item => {
+    itemsList += `${item.quantity}x ${item.name} (Size ${item.size}) - R${(item.price * item.quantity).toFixed(2)}\n`;
+  });
+  itemsList += '\nNew Item Received:\n';
+  const newProd = receipt.newProduct;
+  itemsList += `${newProd.quantity}x ${newProd.name} (Size ${newProd.size}) - R${(newProd.price * newProd.quantity).toFixed(2)}\n`;
+  const priceDiff = receipt.priceDifference || 0;
+  itemsList += `\n${priceDiff >= 0 ? 'Amount to Collect' : 'Refund Amount'}: R${Math.abs(priceDiff).toFixed(2)}`;
+} else if (receipt.items) {
+  // Multi-item receipt
+  itemsList = receipt.items.map(item => 
+    `${item.quantity}x ${item.productName} (Size ${item.size}) - R${item.subtotal.toFixed(2)}`
+  ).join('\n');
+} else {
+  // Single item receipt (old format)
+  itemsList = `${receipt.quantity}x ${receipt.productName} (Size ${receipt.size}) - R${receipt.total.toFixed(2)}`;
+}
 
 const templateParams = {
     to_email: receipt.customerEmail,
@@ -1084,10 +1215,10 @@ const templateParams = {
                           <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
                             <button onClick={() => downloadReceipt(receipt)} style={{ color: '#2563eb', fontSize: '0.875rem', background: 'none', border: 'none', cursor: 'pointer' }}>Download</button>
                             <button onClick={() => emailReceipt(receipt)} style={{ color: '#0ea5e9', fontSize: '0.875rem', background: 'none', border: 'none', cursor: 'pointer' }}>Email</button>
-                          <button onClick={() => openReturnModal(receipt)} disabled={receipt.returned || receipt.exchanged} style={{ color: (receipt.returned || receipt.exchanged) ? '#9ca3af' : '#ef4444', fontSize: '0.875rem', background: 'none', border: 'none', cursor: (receipt.returned || receipt.exchanged) ? 'not-allowed' : 'pointer' }}>{receipt.returned ? 'Returned' : receipt.exchanged ? 'Exchanged' : 'Return'}</button>
-                            {!receipt.returned && (
-                              <button onClick={() => openExchangeModal(receipt)} style={{ color: '#8b5cf6', fontSize: '0.875rem', background: 'none', border: 'none', cursor: 'pointer' }}>Exchange</button>
-                            )}
+                         <button onClick={() => openReturnModal(receipt)} disabled={receipt.returned} style={{ color: receipt.returned ? '#9ca3af' : '#ef4444', fontSize: '0.875rem', background: 'none', border: 'none', cursor: receipt.returned ? 'not-allowed' : 'pointer' }}>{receipt.returned ? 'Returned' : receipt.exchanged ? 'Exchanged' : 'Return'}</button>
+{!receipt.returned && !receipt.exchanged && (
+  <button onClick={() => openExchangeModal(receipt)} style={{ color: '#8b5cf6', fontSize: '0.875rem', background: 'none', border: 'none', cursor: 'pointer' }}>Exchange</button>
+)}
                           </div>
                         </div>
                       </div>
@@ -1095,29 +1226,29 @@ const templateParams = {
   {receipt.type === 'exchange' ? (
     <div style={{ display: 'flex', justifyContent: 'space-between', color: '#1e3a8a' }}>
       <span>
-        {receipt.newProduct?.name} ({receipt.newProduct?.sku}) - Size {receipt.newProduct?.size}
+        {receipt.newProduct?.name || 'N/A'} ({receipt.newProduct?.sku || 'N/A'}) - Size {receipt.newProduct?.size || 'N/A'}
         <br />
         <span style={{ fontSize: '0.75rem', color: '#6b7280' }}>
-        (Exchanged from: {(receipt.originalProducts || []).map(p => p.name).join(', ')})
+        (Exchanged from: {(receipt.originalProducts || []).map(p => p.name).join(', ') || 'N/A'})
         </span>
       </span>
-      <span>{receipt.newProduct?.quantity}x R{receipt.newProduct?.price?.toFixed(2) || '0.00'}</span>
+      <span>{receipt.newProduct?.quantity || 0}x R{(receipt.newProduct?.price || 0).toFixed(2)}</span>
     </div>
   ) : receipt.items && receipt.items.length > 0 ? (
     // Multi-item receipt
     <div>
       {(receipt.items || []).map((item, idx) => (
         <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', color: '#1e3a8a', marginBottom: idx < receipt.items.length - 1 ? '0.5rem' : '0' }}>
-          <span>{item.productName} ({item.sku}) - Size {item.size}</span>
-          <span>{item.quantity}x R{item.pricePerUnit?.toFixed(2) || '0.00'}</span>
+          <span>{item.productName || 'N/A'} ({item.sku || 'N/A'}) - Size {item.size || 'N/A'}</span>
+          <span>{item.quantity || 0}x R{(item.pricePerUnit || 0).toFixed(2)}</span>
         </div>
       ))}
     </div>
   ) : (
    // Old single-item format (backward compatibility)
     <div style={{ display: 'flex', justifyContent: 'space-between', color: '#1e3a8a' }}>
-      <span>{receipt.productName} ({receipt.sku}) - Size {receipt.size}</span>
-      <span>{receipt.quantity}x R{receipt.pricePerUnit ? receipt.pricePerUnit.toFixed(2) : '0.00'}</span>
+      <span>{receipt.productName || 'N/A'} ({receipt.sku || 'N/A'}) - Size {receipt.size || 'N/A'}</span>
+      <span>{receipt.quantity || 0}x R{(receipt.pricePerUnit || 0).toFixed(2)}</span>
     </div>
   )}
 </div>
@@ -1390,9 +1521,9 @@ const templateParams = {
                   <span style={{ fontWeight: '600', color: '#dc2626' }}>Refund Amount:</span>
                   <span style={{ fontWeight: '700', color: '#dc2626' }}>
                     R{selectedReturnItems.reduce((sum, index) => {
-                      const item = returnReceipt.items[index];
-                      return sum + (item.pricePerUnit * item.quantity);
-                    }, 0).toFixed(2)}
+  const item = returnReceipt.items[index];
+  return sum + ((item.pricePerUnit || 0) * item.quantity);
+}, 0).toFixed(2)}
                   </span>
                 </div>
               </div>
@@ -1423,12 +1554,12 @@ const templateParams = {
                 {returnReceipt.items && returnReceipt.items.length === 1 ? (
                   <>
                     <div>{returnReceipt.items[0].productName} - Size {returnReceipt.items[0].size}</div>
-                    <div>{returnReceipt.items[0].quantity}x R{returnReceipt.items[0].pricePerUnit.toFixed(2)}</div>
+                    <div>{returnReceipt.items[0].quantity}x R{(returnReceipt.items[0].pricePerUnit || 0).toFixed(2)}</div>
                   </>
                 ) : (
                   <>
                     <div>{returnReceipt.productName} - Size {returnReceipt.size}</div>
-                    <div>{returnReceipt.quantity}x R{returnReceipt.pricePerUnit.toFixed(2)}</div>
+                    <div>{returnReceipt.quantity}x R{(returnReceipt.pricePerUnit || 0).toFixed(2)}</div>
                   </>
                 )}
               </div>
@@ -1491,11 +1622,11 @@ const templateParams = {
                     <div style={{ flex: '1' }}>
                       <div style={{ fontWeight: '600', color: '#111827' }}>{item.productName}</div>
                       <div style={{ fontSize: '0.875rem', color: '#6b7280' }}>
-                        Size {item.size} • Qty: {item.quantity} • R{item.pricePerUnit.toFixed(2)} each
+                        Size {item.size} • Qty: {item.quantity} • R{(item.pricePerUnit || 0).toFixed(2)} each
                       </div>
                     </div>
                     <div style={{ fontWeight: '700', color: '#7c3aed' }}>
-                      R{(item.pricePerUnit * item.quantity).toFixed(2)}
+                      R{((item.pricePerUnit || 0) * item.quantity).toFixed(2)}
                     </div>
                   </label>
                 ))}
@@ -1603,12 +1734,12 @@ const templateParams = {
                 {exchangeReceipt.items && exchangeReceipt.items.length === 1 ? (
                   <>
                     <div>{exchangeReceipt.items[0].productName} - Size {exchangeReceipt.items[0].size}</div>
-                    <div>{exchangeReceipt.items[0].quantity}x R{exchangeReceipt.items[0].pricePerUnit.toFixed(2)}</div>
+                    <div>{exchangeReceipt.items[0].quantity}x R{(exchangeReceipt.items[0].pricePerUnit || 0).toFixed(2)}</div>
                   </>
                 ) : (
                   <>
                     <div>{exchangeReceipt.productName} - Size {exchangeReceipt.size}</div>
-                    <div>{exchangeReceipt.quantity}x R{exchangeReceipt.pricePerUnit.toFixed(2)}</div>
+                    <div>{exchangeReceipt.quantity}x R{(exchangeReceipt.pricePerUnit || 0).toFixed(2)}</div>
                   </>
                 )}
               </div>
