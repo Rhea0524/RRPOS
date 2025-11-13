@@ -47,6 +47,8 @@ const [selectedReturnItem, setSelectedReturnItem] = useState(null);
 const [selectedExchangeItem, setSelectedExchangeItem] = useState(null);
 const [selectedReturnItems, setSelectedReturnItems] = useState([]);
 const [selectedExchangeItems, setSelectedExchangeItems] = useState([]);
+const [discountPercent, setDiscountPercent] = useState(0);
+const [discountApplied, setDiscountApplied] = useState(false);
 
 
   useEffect(() => {
@@ -161,13 +163,36 @@ const updateCartItemQuantity = (index, newQuantity) => {
   }
 };
 
-const getCartTotal = () => {
+const getSubtotal = () => {
   return cart.reduce((total, item) => total + (item.pricePerUnit * item.quantity), 0);
+};
+
+const getDiscountAmount = () => {
+  return getSubtotal() * (discountPercent / 100);
+};
+
+const getCartTotal = () => {
+  return getSubtotal() - getDiscountAmount();
 };
 
 const getCartItemCount = () => {
   return cart.reduce((total, item) => total + item.quantity, 0);
 };
+
+const applyDiscount = () => {
+  if (discountPercent < 0 || discountPercent > 100) {
+    alert('Please enter a discount between 0% and 100%');
+    return;
+  }
+  setDiscountApplied(true);
+  alert(`✅ ${discountPercent}% discount applied!`);
+};
+
+const clearDiscount = () => {
+  setDiscountPercent(0);
+  setDiscountApplied(false);
+};
+
 
 
   const closeProductModal = () => {
@@ -335,27 +360,30 @@ const completeCheckout = async () => {
     // Create receipt with all items
     const totalAmount = getCartTotal();
     const receipt = {
-      items: cart.map(item => ({
-        productId: item.productId,
-        productName: item.productName,
-        sku: item.sku,
-        size: item.size,
-        quantity: item.quantity,
-        pricePerUnit: item.pricePerUnit,
-        subtotal: item.pricePerUnit * item.quantity
-      })),
-      totalItems: getCartItemCount(),
-      total: totalAmount,
-      customerEmail: customerEmail,
-      timestamp: new Date().toISOString(),
-      date: new Date().toLocaleString('en-ZA', { 
-        year: 'numeric', 
-        month: '2-digit', 
-        day: '2-digit', 
-        hour: '2-digit', 
-        minute: '2-digit' 
-      })
-    };
+  items: cart.map(item => ({
+    productId: item.productId,
+    productName: item.productName,
+    sku: item.sku,
+    size: item.size,
+    quantity: item.quantity,
+    pricePerUnit: item.pricePerUnit,
+    subtotal: item.pricePerUnit * item.quantity
+  })),
+  totalItems: getCartItemCount(),
+  subtotal: getSubtotal(), // ADD THIS
+  discountPercent: discountApplied ? discountPercent : 0, // ADD THIS
+  discountAmount: discountApplied ? getDiscountAmount() : 0, // ADD THIS
+  total: totalAmount,
+  customerEmail: customerEmail,
+  timestamp: new Date().toISOString(),
+  date: new Date().toLocaleString('en-ZA', { 
+    year: 'numeric', 
+    month: '2-digit', 
+    day: '2-digit', 
+    hour: '2-digit', 
+    minute: '2-digit' 
+  })
+};
 
     const docRef = await addDoc(collection(db, 'sales'), receipt);
     const receiptWithId = { ...receipt, id: docRef.id };
@@ -366,10 +394,13 @@ const completeCheckout = async () => {
     await emailReceipt(receiptWithId);
     
     // Clear cart and close modals
-    setCart([]);
-    setCustomerEmail('');
-    setShowCart(false);
-    setShowSuccessModal(true);
+   // Clear cart and close modals
+setCart([]);
+setCustomerEmail('');
+setDiscountPercent(0); // ADD THIS
+setDiscountApplied(false); // ADD THIS
+setShowCart(false);
+setShowSuccessModal(true);
 
   } catch (error) {
     console.error('Error completing checkout:', error);
@@ -732,6 +763,26 @@ const downloadReceipt = (receipt) => {
       ctx.stroke();
       yPos += 35;
       
+      // Subtotal and Discount (if applicable)
+      if (receipt.discountPercent && receipt.discountPercent > 0) {
+        ctx.font = 'bold 16px Arial';
+        ctx.fillStyle = '#6b7280';
+        ctx.fillText('SUBTOTAL:', 40, yPos);
+        ctx.textAlign = 'right';
+        ctx.font = 'bold 18px Arial';
+        ctx.fillText(`R${receipt.subtotal.toFixed(2)}`, 360, yPos);
+        ctx.textAlign = 'left';
+        yPos += 30;
+        
+        ctx.font = 'bold 16px Arial';
+        ctx.fillStyle = '#10b981';
+        ctx.fillText(`DISCOUNT (${receipt.discountPercent}%):`, 40, yPos);
+        ctx.textAlign = 'right';
+        ctx.fillText(`-R${receipt.discountAmount.toFixed(2)}`, 360, yPos);
+        ctx.textAlign = 'left';
+        yPos += 40;
+      }
+      
       // Total
       ctx.font = 'bold 20px Arial';
       ctx.fillStyle = '#1e3a8a';
@@ -988,18 +1039,62 @@ if (receipt.type === 'exchange') {
   itemsList = `${receipt.quantity}x ${receipt.productName} (Size ${receipt.size}) - R${receipt.total.toFixed(2)}`;
 }
 
+// Build discount text
+let discountText = '';
+if (receipt.discountPercent && receipt.discountPercent > 0) {
+  discountText = `\n\nSubtotal: R${receipt.subtotal.toFixed(2)}\nDiscount (${receipt.discountPercent}%): -R${receipt.discountAmount.toFixed(2)}`;
+}
+
+console.log('Receipt object:', receipt);
+console.log('Receipt items:', receipt.items);
+
+// Build template params conditionally
 const templateParams = {
     to_email: receipt.customerEmail,
-    receipt_number: receipt.id.slice(0, 8).toUpperCase(),
+    receipt_number: receipt.id ? receipt.id.slice(0, 8).toUpperCase() : 'N/A',
     customer_email: receipt.customerEmail,
-    items_list: itemsList,
-    total_items: receipt.totalItems || receipt.quantity,
-    total_amount: `R${receipt.total.toFixed(2)}`,
-    date: receipt.date,
+    items: Array.isArray(receipt.items) ? receipt.items.map(item => {
+        const unitPrice = item.pricePerUnit || item.price || item.unitPrice || 0;
+        return {
+            name: item.productName || item.name || 'Unknown Item',
+            sku: item.sku || 'N/A',
+            quantity: item.quantity || 1,
+            size: item.size || '',
+            unit_price: unitPrice.toFixed(2),
+            price: (unitPrice * (item.quantity || 1)).toFixed(2),
+            image: item.imageUrl || item.image || item.productImage || ''
+        };
+    }) : [],
+    total_amount: `R${(receipt.total || 0).toFixed(2)}`,
+    date: receipt.date || new Date().toLocaleString(),
     company_name: "R&R AGENCIES",
     company_website: "www.randragencies.online",
     company_email: "info@randragencies.online"
 };
+
+// Only add discount fields if there's actually a discount
+if (receipt.subtotal && receipt.subtotal > 0) {
+    templateParams.subtotal_amount = `R${receipt.subtotal.toFixed(2)}`;
+}
+
+if (receipt.discountPercent && receipt.discountPercent > 0) {
+    templateParams.discount_text = `Discount (${receipt.discountPercent}%)`;
+    templateParams.discount_amount = `R${receipt.discountAmount.toFixed(2)}`;
+}
+
+console.log('📧 Sending email with params:', templateParams);
+console.log('📊 Receipt data:', { 
+    subtotal: receipt.subtotal, 
+    discountPercent: receipt.discountPercent, 
+    discountAmount: receipt.discountAmount,
+    total: receipt.total 
+});
+
+console.log('📧 Email template params:', templateParams);
+
+
+console.log('Template params:', templateParams);
+
 
             // Send email using EmailJS
             const response = await emailjs.send(
@@ -1211,6 +1306,12 @@ const templateParams = {
                           <div style={{ fontSize: '0.875rem', color: '#4b5563' }}>{receipt.customerEmail}</div>
                         </div>
                         <div style={{ textAlign: 'right' }}>
+                          {receipt.discountPercent > 0 && (
+                            <>
+                              <div style={{ fontSize: '0.875rem', color: '#6b7280', textDecoration: 'line-through' }}>R{(receipt.subtotal || 0).toFixed(2)}</div>
+                              <div style={{ fontSize: '0.75rem', color: '#10b981', fontWeight: '600' }}>{receipt.discountPercent}% OFF</div>
+                            </>
+                          )}
                           <div style={{ fontSize: '1.5rem', fontWeight: '700', color: '#0ea5e9' }}>R{receipt.total ? receipt.total.toFixed(2) : '0.00'}</div>
                           <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
                             <button onClick={() => downloadReceipt(receipt)} style={{ color: '#2563eb', fontSize: '0.875rem', background: 'none', border: 'none', cursor: 'pointer' }}>Download</button>
@@ -1309,10 +1410,89 @@ const templateParams = {
                   </button>
                 </div>
               ))}
-            </div>
+           </div>
 
             <div style={{ borderTop: '2px solid #e5e7eb', paddingTop: '1rem', marginBottom: '1rem' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '1.5rem', fontWeight: '700', color: '#111827' }}>
+              {/* Discount Input Section */}
+              <div style={{ marginBottom: '1rem', padding: '1rem', background: '#f9fafb', borderRadius: '0.5rem', border: '2px solid #e5e7eb' }}>
+                <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '600', color: '#1e3a8a', marginBottom: '0.5rem' }}>
+                  Apply Discount
+                </label>
+                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                  <input
+                    type="number"
+                    min="0"
+                    max="100"
+                    value={discountPercent}
+                    onChange={(e) => {
+                      const value = Math.min(100, Math.max(0, parseFloat(e.target.value) || 0));
+                      setDiscountPercent(value);
+                      setDiscountApplied(false);
+                    }}
+                    placeholder="0"
+                    style={{
+                      flex: '1',
+                      padding: '0.5rem 0.75rem',
+                      border: '2px solid #e5e7eb',
+                      borderRadius: '0.5rem',
+                      fontSize: '1rem',
+                      color: '#000',
+                      background: 'white'
+                    }}
+                  />
+                  <span style={{ fontWeight: '600', color: '#6b7280' }}>%</span>
+                  <button
+                    onClick={applyDiscount}
+                    disabled={discountPercent === 0}
+                    style={{
+                      padding: '0.5rem 1rem',
+                      background: discountPercent === 0 ? '#d1d5db' : 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                      color: 'white',
+                      borderRadius: '0.5rem',
+                      fontWeight: '600',
+                      border: 'none',
+                      cursor: discountPercent === 0 ? 'not-allowed' : 'pointer',
+                      fontSize: '0.875rem'
+                    }}
+                  >
+                    Apply
+                  </button>
+                  {discountApplied && (
+                    <button
+                      onClick={clearDiscount}
+                      style={{
+                        padding: '0.5rem 1rem',
+                        background: '#ef4444',
+                        color: 'white',
+                        borderRadius: '0.5rem',
+                        fontWeight: '600',
+                        border: 'none',
+                        cursor: 'pointer',
+                        fontSize: '0.875rem'
+                      }}
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Price Breakdown */}
+              <div style={{ marginBottom: '0.5rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '1rem', color: '#6b7280', marginBottom: '0.25rem' }}>
+                  <span>Subtotal:</span>
+                  <span>R{getSubtotal().toFixed(2)}</span>
+                </div>
+                
+                {discountApplied && discountPercent > 0 && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '1rem', color: '#10b981', marginBottom: '0.25rem' }}>
+                    <span>Discount ({discountPercent}%):</span>
+                    <span>-R{getDiscountAmount().toFixed(2)}</span>
+                  </div>
+                )}
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '1.5rem', fontWeight: '700', color: '#111827', paddingTop: '0.5rem', borderTop: '2px solid #e5e7eb' }}>
                 <span>Total:</span>
                 <span style={{ color: '#2563eb' }}>R{getCartTotal().toFixed(2)}</span>
               </div>
@@ -1424,7 +1604,13 @@ const templateParams = {
         </div>
 
         <div style={{ borderTop: '1px dashed #e5e7eb', borderBottom: '1px dashed #e5e7eb', paddingTop: '1rem', paddingBottom: '1rem', marginBottom: '1rem' }}>
-          <div style={{ fontSize: '0.875rem', color: '#111827', marginBottom: '0.25rem' }}>Receipt #{lastReceipt.id.slice(0, 8)}</div>
+         <div style={{ fontSize: '0.875rem', color: '#111827', marginBottom: '0.25rem' }}>Receipt #{lastReceipt.id.slice(0, 8)}</div>
+          {lastReceipt.discountPercent > 0 && (
+            <>
+              <div style={{ fontSize: '0.875rem', color: '#6b7280', textDecoration: 'line-through' }}>R{lastReceipt.subtotal.toFixed(2)}</div>
+              <div style={{ fontSize: '0.75rem', color: '#10b981', fontWeight: '600', marginBottom: '0.25rem' }}>{lastReceipt.discountPercent}% OFF (-R{lastReceipt.discountAmount.toFixed(2)})</div>
+            </>
+          )}
           <div style={{ fontSize: '1.875rem', fontWeight: '700', color: '#0ea5e9', marginBottom: '0.75rem' }}>R{lastReceipt.total.toFixed(2)}</div>
           
           <div style={{ textAlign: 'left', fontSize: '0.875rem', maxHeight: '200px', overflowY: 'auto' }}>
